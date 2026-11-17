@@ -1,5 +1,5 @@
 {
-  "task": "Öffne die App Zigarettenautomat Karte und sag mir, welche Menüpunkte im Menü oben rechts (☰) stehen.",
+  "task": "Open the app Zigarettenautomat Karte and tell me which items are in the menu at the top right (☰).",
   "mode": "tree",
   "model": "gpt-6.1-terra",
   "effort": "low",
@@ -9,5 +9,5 @@
   "input_tokens": 102654,
   "output_tokens": 1456,
   "success": false,
-  "answer": "Die App ist geöffnet, aber ich konnte das Menü oben rechts nicht öffnen. Daher kann ich die Menüpunkte nicht zuverlässig nennen."
+  "answer": "The app is open, but I couldn't open the menu at the top right, so I can't reliably name the menu items."
 }

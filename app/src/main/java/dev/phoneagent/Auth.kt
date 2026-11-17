@@ -124,14 +124,14 @@ object Auth {
                 val query = got.poll(10, java.util.concurrent.TimeUnit.MINUTES)
                 ss.close()
                 server = null
-                if (query == null) throw IllegalStateException("Zeitüberschreitung – keine Rückmeldung vom Browser")
+                if (query == null) throw IllegalStateException("Timed out: no response from the browser")
 
-                if (query["state"] != state) throw IllegalStateException("state stimmt nicht überein")
+                if (query["state"] != state) throw IllegalStateException("state does not match")
                 query["error"]?.let { throw IllegalStateException("OAuth: $it ${query["error_description"] ?: ""}".trim()) }
                 val issued = if (saved == null) {
-                    query["client_id"] ?: throw IllegalStateException("Registrierung unvollständig (kein client_id im Callback)")
+                    query["client_id"] ?: throw IllegalStateException("Registration incomplete (no client_id in the callback)")
                 } else {
-                    if (query["client_id"] != null && query["client_id"] != saved) throw IllegalStateException("Callback client_id passt nicht")
+                    if (query["client_id"] != null && query["client_id"] != saved) throw IllegalStateException("Callback client_id does not match")
                     saved
                 }
                 // Keep the issued client ID even if the rest fails, so a retry reuses the registration.
@@ -147,7 +147,7 @@ object Auth {
                 ))
                 if (tok.code != 200) {
                     if (tok.body.contains("invalid_grant")) {
-                        throw IllegalStateException("OpenAI hat die Anmeldung abgelehnt (invalid_grant). Meist: ChatGPT-Konto ohne Plus/Pro.")
+                        throw IllegalStateException("OpenAI rejected the sign-in (invalid_grant). Usually this means a ChatGPT account without Plus/Pro.")
                     }
                     throw IllegalStateException("Token-Austausch ${tok.code}: ${tok.body.take(300)}")
                 }
@@ -160,7 +160,7 @@ object Auth {
                     .putString("scopes", scopes)
                     .apply()
                 if (!scopes.split(" ").contains(PLAN_SCOPE)) {
-                    throw IllegalStateException("ChatGPT-Plan-Nutzung wurde nicht erlaubt. Bitte erneut anmelden und zustimmen.")
+                    throw IllegalStateException("ChatGPT plan usage was not allowed. Please sign in again and approve it.")
                 }
                 saveTokens(j)
                 onDone(null)
@@ -175,12 +175,12 @@ object Auth {
     /** Current access token, refreshed shortly before it expires (refresh tokens rotate). */
     @Synchronized
     fun accessToken(): String {
-        val at = prefs.getString("access_token", null) ?: throw IllegalStateException("Nicht angemeldet")
+        val at = prefs.getString("access_token", null) ?: throw IllegalStateException("Not signed in")
         if (System.currentTimeMillis() < prefs.getLong("expires_at", 0) - 120_000) return at
-        val rt = prefs.getString("refresh_token", null) ?: throw IllegalStateException("Nicht angemeldet")
+        val rt = prefs.getString("refresh_token", null) ?: throw IllegalStateException("Not signed in")
         val r = Net.postForm(TOKEN, mapOf(
             "grant_type" to "refresh_token",
-            "client_id" to (clientId ?: throw IllegalStateException("Kein client_id")),
+            "client_id" to (clientId ?: throw IllegalStateException("No client_id")),
             "refresh_token" to rt,
             "resource" to RESOURCE,
         ))
@@ -222,7 +222,7 @@ object Auth {
     /** RS256 signature check against OpenAI's JWKS plus iss/aud/exp/nonce. */
     private fun verifyIdToken(idToken: String, clientId: String, nonce: String): JSONObject {
         val parts = idToken.split(".")
-        require(parts.size == 3) { "ID-Token ungültig" }
+        require(parts.size == 3) { "Invalid ID token" }
         val header = JSONObject(String(b64urlDecode(parts[0])))
         val payload = JSONObject(String(b64urlDecode(parts[1])))
         require(header.optString("alg") == "RS256") { "Unerwarteter Token-Algorithmus ${header.optString("alg")}" }
@@ -234,14 +234,14 @@ object Auth {
             val k = keys.getJSONObject(i)
             if (k.optString("kid") == header.optString("kid")) key = k
         }
-        requireNotNull(key) { "Signaturschlüssel nicht gefunden" }
+        requireNotNull(key) { "Signing key not found" }
         val pub = KeyFactory.getInstance("RSA").generatePublic(
             RSAPublicKeySpec(BigInteger(1, b64urlDecode(key.getString("n"))), BigInteger(1, b64urlDecode(key.getString("e"))))
         )
         val sig = Signature.getInstance("SHA256withRSA")
         sig.initVerify(pub)
         sig.update("${parts[0]}.${parts[1]}".toByteArray(Charsets.US_ASCII))
-        require(sig.verify(b64urlDecode(parts[2]))) { "ID-Token-Signatur ungültig" }
+        require(sig.verify(b64urlDecode(parts[2]))) { "Invalid ID token signature" }
         require(payload.optString("iss") == ISSUER) { "ID-Token: falscher Issuer" }
         val aud = payload.opt("aud")
         val audOk = when (aud) {
@@ -250,8 +250,8 @@ object Auth {
             else -> false
         }
         require(audOk) { "ID-Token: falsche Audience" }
-        require(payload.optLong("exp") * 1000 > System.currentTimeMillis() - 5_000) { "ID-Token abgelaufen" }
-        require(payload.optString("nonce") == nonce) { "ID-Token gehört nicht zu dieser Anmeldung" }
+        require(payload.optLong("exp") * 1000 > System.currentTimeMillis() - 5_000) { "ID token expired" }
+        require(payload.optString("nonce") == nonce) { "ID token does not belong to this sign-in" }
         return payload
     }
 
@@ -267,10 +267,10 @@ object Auth {
     }
 
     private fun page(ok: Boolean, error: String?): String {
-        val msg = if (ok) "Phone Agent ist mit ChatGPT verbunden." else "Anmeldung fehlgeschlagen${error?.let { ": $it" } ?: ""}."
+        val msg = if (ok) "Phone Agent is connected to ChatGPT." else "Sign-in failed${error?.let { ": $it" } ?: ""}."
         return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
             <title>Phone Agent</title></head><body style="font-family:sans-serif;padding:32px;text-align:center">
-            <h2>$msg</h2><p><a href="phoneagent://auth-done" style="font-size:18px">Zurück zur App</a></p></body></html>"""
+            <h2>$msg</h2><p><a href="phoneagent://auth-done" style="font-size:18px">Back to the app</a></p></body></html>"""
     }
 
     private fun parseQuery(q: String): Map<String, String> =

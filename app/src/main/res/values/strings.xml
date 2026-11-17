@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="a11y_description">Phone Agent liest den Bildschirm (UI-Baum und Screenshots) und führt Tippen, Wischen und Texteingaben aus, um Aufgaben zu erledigen, die du in der App startest. Bildschirminhalte werden dafür an das gewählte OpenAI-Modell gesendet.</string>
+    <string name="a11y_description">Phone Agent reads the screen (UI tree and screenshots) and taps, swipes and types to complete tasks you start in the app. To do this, screen content is sent to the selected OpenAI model.</string>
 </resources>

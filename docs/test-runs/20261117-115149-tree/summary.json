@@ -1,5 +1,5 @@
 {
-  "task": "Stelle in der Uhr-App einen Wecker für 6:45 Uhr mit der Bezeichnung Agent Test v2.",
+  "task": "In the Clock app, set an alarm for 6:45 labeled Agent Test v2.",
   "mode": "tree",
   "model": "gpt-6.1-terra",
   "effort": "low",
@@ -9,5 +9,5 @@
   "input_tokens": 29505,
   "output_tokens": 574,
   "success": true,
-  "answer": "Der Wecker „Agent Test v2“ ist für morgen um 6:45 Uhr gestellt und aktiviert. Ich habe dafür „Nicht stören“ ausgeschaltet."
+  "answer": "The alarm “Agent Test v2” is set for tomorrow at 6:45 and switched on. To do this I turned off Do Not Disturb."
 }

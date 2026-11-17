@@ -1,5 +1,5 @@
 {
-  "task": "Stelle in der Uhr-App einen Wecker für 7:30 Uhr mit der Bezeichnung Agent Test tree.",
+  "task": "In the Clock app, set an alarm for 7:30 labeled Agent Test tree.",
   "mode": "tree",
   "model": "gpt-6.1-terra",
   "effort": "low",
@@ -9,5 +9,5 @@
   "input_tokens": 59772,
   "output_tokens": 1045,
   "success": false,
-  "answer": "Abgebrochen: maximale Schrittzahl (30) erreicht."
+  "answer": "Stopped: reached the step limit (30)."
 }

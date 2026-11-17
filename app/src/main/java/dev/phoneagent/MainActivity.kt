@@ -112,16 +112,16 @@ class MainActivity : Activity() {
             setPadding(dp(14), dp(8), dp(14), dp(24))
         }
         col.addView(label("Phone Agent", 24f, true))
-        col.addView(label("KI-Agent, der dein Handy bedient – Prototyp", 13f, color = Color.rgb(95, 99, 104)))
+        col.addView(label("An AI agent that operates your phone (prototype)", 13f, color = Color.rgb(95, 99, 104)))
 
         // 1) The one switch
-        val s1 = section("1 · Bedienungshilfe", col)
+        val s1 = section("1 · Accessibility", col)
         a11yText = label("")
-        a11yBtn = button("Bedienungshilfe aktivieren") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        a11yBtn = button("Turn on accessibility") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         s1.addView(a11yText); s1.addView(a11yBtn)
 
         // 2) Sign in with ChatGPT
-        val s2 = section("2 · ChatGPT-Konto", col)
+        val s2 = section("2 · ChatGPT account", col)
         accountText = label("")
         loginBtn = button("Continue with ChatGPT") { if (Auth.signedIn) logout() else startLogin(openBrowser = true) }
         usageLink = label("Using ChatGPT plan · Manage usage", 13f, color = Color.rgb(26, 115, 232)).apply {
@@ -130,7 +130,7 @@ class MainActivity : Activity() {
         s2.addView(accountText); s2.addView(loginBtn); s2.addView(usageLink)
 
         // 3) Model + mode
-        val s3 = section("3 · Modell & Modus", col)
+        val s3 = section("3 · Model & mode", col)
         modelSpinner = Spinner(this)
         modelSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
@@ -157,9 +157,9 @@ class MainActivity : Activity() {
         s3.addView(modelSpinner); s3.addView(effortSpinner); s3.addView(modeGroup)
 
         // 4) Task
-        val s4 = section("4 · Aufgabe", col)
+        val s4 = section("4 · Task", col)
         taskEdit = EditText(this).apply {
-            hint = "z. B. „Trag morgen 15 Uhr ‚Zahnarzt' in den Kalender ein“"
+            hint = "e.g. \"Add 'Dentist' to my calendar tomorrow at 3 pm\""
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             minLines = 2
             setText(prefs.getString("task", ""))
@@ -173,7 +173,7 @@ class MainActivity : Activity() {
         s4.addView(taskEdit); s4.addView(row); s4.addView(answerText)
 
         // Log
-        val s5 = section("Protokoll", col)
+        val s5 = section("Log", col)
         logText = TextView(this).apply {
             typeface = Typeface.MONOSPACE; textSize = 10.5f; setTextColor(Color.rgb(60, 64, 67)); setTextIsSelectable(true)
         }
@@ -198,21 +198,21 @@ class MainActivity : Activity() {
 
     private fun refresh() {
         val svc = AgentService.instance
-        a11yText.text = if (svc != null) "✓ Aktiv – der Agent kann den Bildschirm lesen und bedienen." else "Aus. Einmal in den Bedienungshilfen „Phone Agent“ einschalten."
+        a11yText.text = if (svc != null) "✓ On: the agent can read and operate the screen." else "Off. Switch on \"Phone Agent\" once under Accessibility."
         a11yBtn.visibility = if (svc != null) View.GONE else View.VISIBLE
         if (Auth.signedIn) {
-            accountText.text = "✓ Angemeldet als ${Auth.email ?: "?"}" + if (Auth.planEnabled) "" else " (Plan-Nutzung nicht erlaubt)"
-            loginBtn.text = "Abmelden"
+            accountText.text = "✓ Signed in as ${Auth.email ?: "?"}" + if (Auth.planEnabled) "" else " (plan usage not allowed)"
+            loginBtn.text = "Sign out"
             usageLink.visibility = View.VISIBLE
         } else {
-            accountText.text = "Melde dich mit deinem ChatGPT-Konto an. Anfragen laufen dann über deinen ChatGPT-Plan (Plus/Pro), kein API-Key nötig."
+            accountText.text = "Sign in with your ChatGPT account. Requests then run on your ChatGPT plan (Plus/Pro); no API key needed."
             loginBtn.text = "Continue with ChatGPT"
             usageLink.visibility = View.GONE
         }
         val running = svc?.agent != null
         startBtn.isEnabled = !running
         stopBtn.isEnabled = running
-        answerText.text = AgentBus.lastAnswer?.let { "Ergebnis: $it" } ?: ""
+        answerText.text = AgentBus.lastAnswer?.let { "Result: $it" } ?: ""
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
@@ -236,10 +236,10 @@ class MainActivity : Activity() {
                 val arr = JSONArray()
                 list.forEach { arr.put(JSONObject().put("slug", it.slug).put("name", it.name)) }
                 prefs.edit().putString("models", arr.toString()).apply()
-                AgentBus.log("Modelle: " + list.joinToString(", ") { it.slug })
+                AgentBus.log("Models: " + list.joinToString(", ") { it.slug })
                 main.post { setModels(list) }
             } catch (e: Exception) {
-                AgentBus.log("Modelle laden fehlgeschlagen: ${e.message}")
+                AgentBus.log("Loading models failed: ${e.message}")
             }
         }.start()
     }
@@ -257,17 +257,17 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- actions
 
     private fun startLogin(openBrowser: Boolean) {
-        accountText.text = "Anmeldung läuft – bitte im Browser bestätigen…"
+        accountText.text = "Signing in: please confirm in the browser…"
         Auth.startLogin(
             onUrl = { url ->
                 // Debug builds log the URL so the sign-in can also be done in a desktop browser (adb forward tcp:1455 tcp:1455).
                 if (BuildConfig.DEBUG && !url.contains("id_token_hint")) Log.i("PhoneAgent", "AUTH_URL $url")
                 if (openBrowser) main.post {
-                    try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) { toast("Kein Browser gefunden") }
+                    try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) { toast("No browser found") }
                 }
             },
             onDone = { err ->
-                if (err != null) AgentBus.log("Anmeldung fehlgeschlagen: $err") else AgentBus.log("Angemeldet als ${Auth.email}")
+                if (err != null) AgentBus.log("Sign-in failed: $err") else AgentBus.log("Signed in as ${Auth.email}")
                 main.post {
                     refresh()
                     if (err == null) fetchModels() else toast(err)
@@ -277,18 +277,18 @@ class MainActivity : Activity() {
     }
 
     private fun logout() {
-        Auth.logout { main.post { AgentBus.log("Abgemeldet"); refresh() } }
+        Auth.logout { main.post { AgentBus.log("Signed out"); refresh() } }
     }
 
     private fun start() {
-        val svc = AgentService.instance ?: return toast("Erst die Bedienungshilfe aktivieren")
-        if (!Auth.signedIn) return toast("Erst mit ChatGPT anmelden")
+        val svc = AgentService.instance ?: return toast("Turn on accessibility first")
+        if (!Auth.signedIn) return toast("Sign in with ChatGPT first")
         val task = taskEdit.text.toString().trim()
-        if (task.isEmpty()) return toast("Bitte eine Aufgabe eingeben")
-        val model = currentModel() ?: return toast("Kein Modell geladen")
+        if (task.isEmpty()) return toast("Please enter a task")
+        val model = currentModel() ?: return toast("No model loaded")
         prefs.edit().putString("task", task).putString("mode", currentMode().key).apply()
         AgentBus.lastAnswer = null
-        if (!svc.startAgent(task, currentMode(), model, efforts[effortSpinner.selectedItemPosition])) toast("Agent läuft bereits")
+        if (!svc.startAgent(task, currentMode(), model, efforts[effortSpinner.selectedItemPosition])) toast("Agent is already running")
         refresh()
     }
 

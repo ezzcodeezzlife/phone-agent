@@ -1,5 +1,5 @@
 {
-  "task": "Erstelle im Kalender einen Termin morgen um 15:00 Uhr mit dem Titel Phone Agent Test (Dauer 1 Stunde) und speichere ihn.",
+  "task": "In Calendar, create an event tomorrow at 15:00 titled Phone Agent Test (1 hour long) and save it.",
   "mode": "tree",
   "model": "gpt-6.1-terra",
   "effort": "low",
@@ -9,5 +9,5 @@
   "input_tokens": 12216,
   "output_tokens": 210,
   "success": false,
-  "answer": "Der Termin konnte nicht erstellt werden, weil auf dem Gerät noch kein Kalender synchronisiert ist. Bitte melde dich bei Google an bzw. synchronisiere einen Kalender und versuche es erneut."
+  "answer": "The event couldn't be created because no calendar is synced on the device yet. Please sign in to Google or sync a calendar, then try again."
 }

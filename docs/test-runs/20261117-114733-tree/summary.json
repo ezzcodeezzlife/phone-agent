@@ -1,5 +1,5 @@
 {
-  "task": "Finde in den Einstellungen heraus, welche Android-Version und welches Sicherheitsupdate auf dem Gerät installiert sind.",
+  "task": "Use Settings to find out which Android version and which security update are installed on the device.",
   "mode": "tree",
   "model": "gpt-6.1-terra",
   "effort": "low",
@@ -9,5 +9,5 @@
   "input_tokens": 7734,
   "output_tokens": 199,
   "success": true,
-  "answer": "Auf dem Gerät sind Android 15 und das Android-Sicherheitsupdate vom 5. September 2024 installiert."
+  "answer": "The device has Android 15 and the Android security update of 5 September 2024 installed."
 }

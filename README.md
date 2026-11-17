@@ -23,7 +23,7 @@ AgentService  ── AccessibilityService (the one switch)
               + screenshot (takeScreenshot, scaled to 720 px wide, boxes in hybrid mode)
    act():     dispatchGesture (tap / long press / swipe), ACTION_SET_TEXT, IME enter,
               scroll actions, global actions (back/home/…), launch intents
-Agent         ── loop: observe → Responses API (function tools) → execute → repeat (max 30 steps)
+Agent         ── loop: observe → Responses API (function tools) → execute → repeat (max 40 steps)
 Auth          ── Sign in with ChatGPT (dynamic client registration, PKCE, loopback 127.0.0.1:1455)
 OpenAI        ── POST /v1/responses with store=false, stream=true (SSE)
 ```

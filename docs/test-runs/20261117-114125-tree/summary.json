@@ -1,5 +1,5 @@
 {
-  "task": "Öffne Gmail und sag mir Absender und Betreff der neuesten E-Mail im Posteingang.",
+  "task": "Open Gmail and tell me the sender and subject of the newest email in the inbox.",
   "mode": "tree",
   "model": "gpt-6.1-terra",
   "effort": "low",
@@ -9,5 +9,5 @@
   "input_tokens": 6231,
   "output_tokens": 177,
   "success": false,
-  "answer": "Ich kann die neueste E-Mail nicht ablesen: Das Gmail-Konto ist nicht synchronisiert, und die einmalige Synchronisierung hat den Posteingang nicht geladen. Bitte prüfe die Anmeldung und Synchronisierung des Kontos."
+  "answer": "I can't read the newest email: the Gmail account isn't synced, and the one-time sync didn't load the inbox. Please check the account's sign-in and sync."
 }

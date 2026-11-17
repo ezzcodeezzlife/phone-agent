@@ -1,5 +1,5 @@
 {
-  "task": "Suche in Chrome nach Wetter Frankfurt und sag mir die aktuelle Temperatur.",
+  "task": "Search Chrome for “Wetter Frankfurt” and tell me the current temperature.",
   "mode": "auto",
   "model": "gpt-6.1-terra",
   "effort": "low",
@@ -10,5 +10,5 @@
   "output_tokens": 296,
   "screenshots_sent": 3,
   "success": true,
-  "answer": "In Frankfurt am Main beträgt die aktuelle Temperatur 12 °C. Es ist stark bewölkt."
+  "answer": "The current temperature in Frankfurt am Main is 12 °C, heavily cloudy."
 }

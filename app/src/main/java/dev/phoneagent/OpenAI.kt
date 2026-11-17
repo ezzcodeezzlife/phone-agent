@@ -12,7 +12,7 @@ object OpenAI {
 
     fun listModels(): List<Model> {
         val r = Net.get("$BASE/models", mapOf("Authorization" to "Bearer ${Auth.accessToken()}"))
-        if (r.code != 200) throw IllegalStateException("Modelle ${r.code}: ${r.body.take(300)}")
+        if (r.code != 200) throw IllegalStateException("Models ${r.code}: ${r.body.take(300)}")
         val j = JSONObject(r.body)
         val out = ArrayList<Model>()
         j.optJSONArray("models")?.let { arr ->
@@ -71,6 +71,6 @@ object OpenAI {
             throw ApiError(r.code, code, param, "HTTP ${r.code}${code?.let { " $it" } ?: ""}${param?.let { " (param $it)" } ?: ""}: $msg")
         }
         completed?.let { return it }
-        throw ApiError(0, failCode, null, failure ?: "Stream ohne response.completed beendet")
+        throw ApiError(0, failCode, null, failure ?: "Stream ended without response.completed")
     }
 }

@@ -4,6 +4,7 @@ Setup:
 - Device: Pixel 9 emulator, Android 15 (API 35, Google Play image).
 - Model: `gpt-6.1-terra`, reasoning effort `low`, through *Sign in with ChatGPT* (ChatGPT Plus/Pro plan, no API key).
 - Every run is in `docs/test-runs/<time>-<mode>/`: one screenshot plus one tree file per step, `log.txt` and `summary.json`.
+- The tasks were given in German and the app's UI was German at the time. `log.txt` and `summary.json` were translated to English afterwards. Screenshots and tree files are raw captures, so German websites and apps (Google search, the WebView test app) appear in German there.
 
 ## Overview
 
@@ -11,7 +12,7 @@ Setup:
 |---|---|---|---|---|---|---|
 | 1 | Read the newest email in Gmail | tree | ✗ (correctly stopped) | 4 | 25 s | The emulator's Google test account doesn't sync; the agent tapped "Sync now" and reported it honestly. |
 | 2 | Calendar event tomorrow 15:00 | tree | ✗ (correctly stopped) | 6 | 26 s | "No calendars have been synchronized": same environment problem. Navigation up to "New event" worked. |
-| 3 | Calendar event tomorrow 16:00 | screenshot | ✗ (correctly stopped) | 4 | 17 s | Same as #2. |
+| 3 | Calendar event tomorrow 16:00 | screenshot | ✗ (correctly stopped) | 4 | 17 s | Same as #2. The saved log stops after step 1; the rest was lost in an emulator crash. |
 | 4 | Alarm 7:30 "Agent Test tree" (Do Not Disturb on) | tree (v1) | ≈✓, hit the 30-step limit | 30 | 138 s | DND blocked "Add alarm". The agent spent ~18 steps going back and forth (safety rule too strict), then set the alarm correctly. Time dial 7 → 30 → AM tapped by element ID. |
 | 5 | Alarm 7:30 "Agent Test screenshot" (DND already off) | screenshot | ✓ | 11 | 45 s | Hit the time dial with pixel coordinates alone. Verified in the clock app. |
 | 6 | Find Android version + security update | tree | ✓ | 5 | 21 s | Through the settings search. Android 15, 5 Sep 2024. |
@@ -19,10 +20,10 @@ Setup:
 | 8 | Alarm 6:45 "Agent Test v2" (DND on) | tree (v2) | ✓ | 16 | 70 s | v2: loop detection + "you may change ordinary settings when they block the task". The agent turned DND off directly and said so in its answer. |
 | 9 | Android version (settings opened fresh) | screenshot (v2) | ✓ | 4 | 19 s | |
 | 10 | WebView app: read the ☰ menu items | tree (v2) | ✗ | 40 | 166 s | The ☰ icon has no label and doesn't appear in the tree at all. The model only ever tried `tap(element=0)`. |
-| 11 | Same | screenshot (v2) | ✓ | 4 | 24 s | Home, Zigarettenautomat Karte, Automaten aufstellen, Blog, WhatsApp Kanal |
+| 11 | Same | screenshot (v2) | ✓ | 4 | 24 s | Home, Zigarettenautomat Karte, Automaten aufstellen, Blog, WhatsApp Kanal (the app is German: home, cigarette machine map, set up machines, blog, WhatsApp channel) |
 | 12 | Same | **auto** (v3) | ✓ | 5 | 27 s | tree → `look` → tapped ☰ at x,y from the screenshot. 2 screenshots sent to the model. |
 | 13 | Same | hybrid (v3) | ✓ | 4 | 21 s | 4 screenshots sent to the model. |
-| 14 | Chrome: "Wetter Frankfurt", current temperature | **auto** (v3) | ✓ | 9 | 42 s | Closed Chrome's notification prompt, rejected Google cookies ("Alle ablehnen"), `look` → "12 °C, heavily cloudy" (checked against the screenshot). |
+| 14 | Chrome: search "Wetter Frankfurt" (German for "weather Frankfurt"), current temperature | **auto** (v3) | ✓ | 9 | 42 s | Closed Chrome's notification prompt, rejected Google cookies ("Alle ablehnen", "Reject all"), `look` → "12 °C, heavily cloudy" (checked against the screenshot). |
 | 16 | Add a contact: name + German mobile number (redacted) | **auto** (v3) | ✓ | 9 | 56 s | Contacts → Create contact → `look` (the name field has no label) → typed name and number → Save. Checked in the contacts DB. The run folder is not published because it contains a real phone number. The first attempt was interrupted by an emulator crash; it ran stably after restarting with `-gpu swiftshader_indirect`. |
 | 15 | Switch off every alarm named "Agent Test…", delete nothing | **auto** (v3) | ✓ | 8 | 35 s | Found and switched off all 3 (scrolled through the list), no screenshot needed. Checked in the tree. |
 

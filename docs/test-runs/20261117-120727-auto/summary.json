@@ -1,5 +1,5 @@
 {
-  "task": "Schalte in der Uhr-App alle Wecker aus, deren Bezeichnung mit Agent Test beginnt. Nichts löschen.",
+  "task": "In the Clock app, switch off every alarm whose label starts with Agent Test. Don't delete anything.",
   "mode": "auto",
   "model": "gpt-6.1-terra",
   "effort": "low",
@@ -10,5 +10,5 @@
   "output_tokens": 305,
   "screenshots_sent": 0,
   "success": true,
-  "answer": "Alle drei Wecker, deren Bezeichnung mit „Agent Test“ beginnt, sind ausgeschaltet. Es wurde nichts gelöscht."
+  "answer": "All three alarms whose label starts with “Agent Test” are switched off. Nothing was deleted."
 }

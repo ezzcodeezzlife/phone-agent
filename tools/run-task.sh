@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs one agent task on the connected device/emulator (debug build) and prints the run log.
-# usage: tools/run-task.sh <tree|screenshot|hybrid> "<task>" [model] [effort] [pkgs-to-force-stop,comma-separated]
+# usage: tools/run-task.sh <auto|tree|screenshot|hybrid> "<task>" [model] [effort] [pkgs-to-force-stop,comma-separated]
 set -u
 export MSYS_NO_PATHCONV=1
 ADB="${ADB:-adb}"

@@ -70,7 +70,7 @@ class AgentService : AccessibilityService() {
 
     override fun onServiceConnected() {
         instance = this
-        AgentBus.log("Bedienungshilfe verbunden")
+        AgentBus.log("Accessibility service connected")
         AgentBus.changed()
         if (BuildConfig.DEBUG) registerDumpReceiver()
     }
@@ -88,7 +88,7 @@ class AgentService : AccessibilityService() {
                     val dir = java.io.File(getExternalFilesDir("dumps"), name).apply { mkdirs() }
                     java.io.File(dir, "tree.txt").writeText("foreground: ${obs.pkg}\nelements: ${obs.elements.size}\n\n${obs.tree}")
                     obs.jpeg?.let { java.io.File(dir, "hybrid.jpg").writeBytes(it) }
-                    AgentBus.log("Dump gespeichert: ${dir.absolutePath} (${obs.elements.size} Elemente)")
+                    AgentBus.log("Dump saved: ${dir.absolutePath} (${obs.elements.size} elements)")
                 }.start()
             }
         }
@@ -121,7 +121,7 @@ class AgentService : AccessibilityService() {
         agent = a
         main.post { showOverlay() }
         Thread {
-            val answer = try { a.run() } catch (e: Exception) { AgentBus.log("✖ $e"); "Fehler: ${e.message}" }
+            val answer = try { a.run() } catch (e: Exception) { AgentBus.log("✖ $e"); "Error: ${e.message}" }
             AgentBus.lastAnswer = answer
             agent = null
             main.post { hideOverlay() }
@@ -138,7 +138,7 @@ class AgentService : AccessibilityService() {
 
     fun stopAgent() {
         agent?.stopped = true
-        overlay("Stoppe…")
+        overlay("Stopping…")
     }
 
     /** Waits until the UI stopped changing (no accessibility events for 500 ms), max [maxMs]. */
@@ -156,7 +156,7 @@ class AgentService : AccessibilityService() {
         val screen = getSystemService(WindowManager::class.java).currentWindowMetrics.bounds
         val screenW = full?.width ?: screen.width()
         val screenH = full?.height ?: screen.height()
-        if (full == null) shotNote = "Screenshot nicht verfügbar (geschützter Bildschirm?)"
+        if (full == null) shotNote = "Screenshot not available (protected screen?)"
         val scale = if (screenW > MODEL_WIDTH) MODEL_WIDTH.toFloat() / screenW else 1f
         val w = (screenW * scale).toInt()
         val h = (screenH * scale).toInt()
@@ -451,7 +451,7 @@ class AgentService : AccessibilityService() {
             fitInsetsTypes = 0
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         }
-        try { wm.addView(root, lp); overlayRoot = root; overlayText = statusView } catch (e: Exception) { AgentBus.log("Overlay-Fehler: $e") }
+        try { wm.addView(root, lp); overlayRoot = root; overlayText = statusView } catch (e: Exception) { AgentBus.log("Overlay error: $e") }
     }
 
     private fun hideOverlay() {

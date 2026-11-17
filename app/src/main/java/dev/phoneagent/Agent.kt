@@ -15,10 +15,10 @@ import java.util.Locale
 /** How the screen is shown to the model. */
 enum class Mode(val key: String, val label: String) {
     /** Tree with element ids; a marked screenshot is added only when needed (look, trouble, sparse tree). */
-    AUTO("auto", "Auto (UI-Baum, Screenshot bei Bedarf)"),
-    TREE("tree", "Nur UI-Baum (Element-IDs)"),
-    SCREENSHOT("screenshot", "Nur Screenshot (x,y)"),
-    HYBRID("hybrid", "Immer beides (Screenshot + IDs)");
+    AUTO("auto", "Auto (UI tree, screenshot when needed)"),
+    TREE("tree", "UI tree only (element IDs)"),
+    SCREENSHOT("screenshot", "Screenshot only (x,y)"),
+    HYBRID("hybrid", "Always both (screenshot + IDs)");
 
     companion object { fun of(key: String?) = entries.firstOrNull { it.key == key } ?: AUTO }
 }
@@ -79,8 +79,8 @@ class Agent(
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         val dir = File(svc.getExternalFilesDir("runs"), "$stamp-${mode.key}").apply { mkdirs() }
         AgentBus.runFile = File(dir, "log.txt")
-        AgentBus.log("▶ Aufgabe: $task")
-        AgentBus.log("  Modus: ${mode.label} · Modell: $model · Effort: $effort")
+        AgentBus.log("▶ Task: $task")
+        AgentBus.log("  Mode: ${mode.label} · Model: $model · Effort: $effort")
         val t0 = SystemClock.elapsedRealtime()
         var inTok = 0
         var outTok = 0
@@ -91,12 +91,12 @@ class Agent(
         var lastSig: Int? = null
         var idle = 0
 
-        svc.overlay("Starte…")
+        svc.overlay("Starting…")
         svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
         Thread.sleep(900)
 
         loop@ for (step in 1..MAX_STEPS) {
-            if (stopped) { answer = "Abgebrochen."; break }
+            if (stopped) { answer = "Stopped."; break }
             steps = step
             svc.settle()
             val obs = svc.observe(marks = mode == Mode.HYBRID || mode == Mode.AUTO)
@@ -106,7 +106,7 @@ class Agent(
                 history[history.lastIndex] = history.last() + "  [screen did not change]"
             }
             lastSig = obs.signature
-            svc.overlay("Schritt $step · denkt nach…")
+            svc.overlay("Step $step · thinking…")
 
             val withShot = needScreenshot(obs) && obs.jpeg != null
             lookRequested = false
@@ -115,7 +115,7 @@ class Agent(
             val tReq = SystemClock.elapsedRealtime()
             val resp = try { call(req) } catch (e: Exception) {
                 AgentBus.log("✖ API: ${e.message}")
-                answer = "Fehler bei der KI-Anfrage: ${e.message}"
+                answer = "AI request failed: ${e.message}"
                 break
             }
             val dt = SystemClock.elapsedRealtime() - tReq
@@ -143,19 +143,19 @@ class Agent(
                     }
                 }
             }
-            AgentBus.log("— Schritt $step (${obs.pkg}) · KI ${"%.1f".format(dt / 1000.0)} s · $i in / $o out" + if (withShot && mode == Mode.AUTO) " · 📷" else "")
+            AgentBus.log("— Step $step (${obs.pkg}) · AI ${"%.1f".format(dt / 1000.0)} s · $i in / $o out" + if (withShot && mode == Mode.AUTO) " · 📷" else "")
             texts.forEach { AgentBus.log("💬 ${it.take(400)}") }
 
             if (calls.isEmpty()) {
                 history += "$step. (no tool call) ${texts.joinToString(" ").take(200)}"
-                if (++idle >= 2) { answer = texts.joinToString(" ").ifBlank { "Keine Aktion." }; break }
+                if (++idle >= 2) { answer = texts.joinToString(" ").ifBlank { "No action." }; break }
                 continue
             }
             idle = 0
             for (c in calls.take(4)) {
                 if (stopped) break
                 val pretty = pretty(c, obs)
-                svc.overlay("Schritt $step · ${pretty.take(40)}")
+                svc.overlay("Step $step · ${pretty.take(40)}")
                 val res = try { exec(c, obs) } catch (e: Exception) { "error: ${e.message}" }
                 AgentBus.log("➜ $pretty → $res")
                 // Loop detection: the same action on the same target within the last 6 actions.
@@ -164,17 +164,17 @@ class Agent(
                 recentKeys += key
                 history += "$step. $pretty → $res" + if (repeated) "  [REPEATED – you already did this recently; it did not get you closer. Try a different approach.]" else ""
                 if (c.name == "finish") {
-                    answer = c.args.optString("answer").ifBlank { "Fertig." }
+                    answer = c.args.optString("answer").ifBlank { "Done." }
                     success = c.args.optBoolean("success", true)
                     break@loop
                 }
                 if (calls.size > 1) svc.settle(1500)
             }
         }
-        if (answer == null) answer = if (stopped) "Abgebrochen." else "Abgebrochen: maximale Schrittzahl ($MAX_STEPS) erreicht."
+        if (answer == null) answer = if (stopped) "Stopped." else "Stopped: reached the step limit ($MAX_STEPS)."
         val secs = (SystemClock.elapsedRealtime() - t0) / 1000.0
-        AgentBus.log("■ Ergebnis: $answer")
-        AgentBus.log("  $steps Schritte · ${"%.0f".format(secs)} s gesamt (KI ${"%.0f".format(llmMs / 1000.0)} s) · Tokens $inTok in / $outTok out · Screenshots an KI: $shotsSent")
+        AgentBus.log("■ Result: $answer")
+        AgentBus.log("  $steps steps · ${"%.0f".format(secs)} s total (AI ${"%.0f".format(llmMs / 1000.0)} s) · tokens $inTok in / $outTok out · screenshots sent to AI: $shotsSent")
         File(dir, "summary.json").writeText(JSONObject()
             .put("task", task).put("mode", mode.key).put("model", model).put("effort", effort)
             .put("steps", steps).put("seconds", secs).put("llm_seconds", llmMs / 1000.0)
@@ -264,7 +264,7 @@ How to work:
                     Compat.namespace && (m.contains("namespace") || m.contains("tools")) -> { Compat.namespace = false; body.put("tools", tools()) }
                     else -> throw e
                 }
-                AgentBus.log("↻ Anfrage angepasst nach: ${e.message?.take(200)}")
+                AgentBus.log("↻ Request adjusted after: ${e.message?.take(200)}")
             }
         }
         return OpenAI.respond(body)
