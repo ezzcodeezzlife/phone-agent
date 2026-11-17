@@ -5,9 +5,11 @@ AI requests run on the user's **ChatGPT plan** through OpenAI's *Sign in with Ch
 
 Status: prototype, tested only on the emulator (Pixel 9, Android 15).
 
+**Download:** [phone-agent.apk (latest build)](https://github.com/ezzcodeezzlife/phone-agent/releases/latest/download/phone-agent.apk). Android 11 or newer. Every push to `main` builds a new signed APK through GitHub Actions ([all releases](https://github.com/ezzcodeezzlife/phone-agent/releases)).
+
 ## Setup for users
 
-1. Install the app.
+1. Download the APK above and install it (allow installs from your browser or file manager).
 2. Under **Accessibility**, switch on **Phone Agent** (the only system setting needed). When the APK is installed outside a store on Android 13+, first allow it under App info → ⋮ → "Allow restricted settings".
 3. **Continue with ChatGPT**: sign in in the browser and allow ChatGPT plan usage (Plus/Pro).
 4. Pick a model, a mode and a task, then press ▶ Start. A small "Phone Agent ■ Stop" pill at the top right shows progress and stops the run.

@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Release signing comes from environment variables (GitHub Actions secrets). Nothing secret lives in the repo;
+// without them `assembleRelease` produces an unsigned APK.
+val signingKeystore: String? = System.getenv("SIGNING_KEYSTORE_PATH")
+
 android {
     namespace = "dev.phoneagent"
     compileSdk = 36
@@ -12,8 +16,27 @@ android {
         // AccessibilityService.takeScreenshot() needs Android 11 (API 30).
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI passes the run number so every published APK can update the previous one.
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("VERSION_NAME") ?: "0.1.0-dev"
+    }
+
+    signingConfigs {
+        create("release") {
+            if (signingKeystore != null) {
+                storeFile = file(signingKeystore)
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            if (signingKeystore != null) signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     buildFeatures {
