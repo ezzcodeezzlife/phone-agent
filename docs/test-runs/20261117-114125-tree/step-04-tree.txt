@@ -1,0 +1,18 @@
+== System: com.android.systemui ==
+[1] TextView "11:41" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Android System notification:" @(148,47)
+[4] ImageView "Do Not Disturb" @(570,47)
+[5] ImageView "Wifi signal full." @(606,46)
+[6] FrameLayout "Phone signal full." @(632,47)
+[7] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.google.android.gm "Mail" ==
+[8] ScrollView scroll @(360,744) size 720x1490
+[9] ImageButton "Open navigation drawer" click @(49,150)
+[10] FrameLayout "Signed in as Test User test-account@gmail.com Account and settings." click @(668,150)
+[11] TextView "Account not synced" @(360,154)
+[12] TextView "This account isn't set up to sync automatically. Tap Sync Now to sync mail once, or Change Sync Sett…" @(360,270)
+[13] Button "Sync now" click @(360,424)
+[14] Button "Change sync settings" click @(360,510)
+[15] FrameLayout "Mail" selected @(212,1532)
+[16] FrameLayout "Meet" click @(507,1532)

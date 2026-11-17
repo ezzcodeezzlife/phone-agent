@@ -1,0 +1,13 @@
+{
+  "task": "Öffne die App Zigarettenautomat Karte und sag mir, welche Menüpunkte im Menü oben rechts (☰) stehen.",
+  "mode": "tree",
+  "model": "gpt-6.1-terra",
+  "effort": "low",
+  "steps": 40,
+  "seconds": 166.467,
+  "llm_seconds": 118.203,
+  "input_tokens": 102654,
+  "output_tokens": 1456,
+  "success": false,
+  "answer": "Die App ist geöffnet, aber ich konnte das Menü oben rechts nicht öffnen. Daher kann ich die Menüpunkte nicht zuverlässig nennen."
+}

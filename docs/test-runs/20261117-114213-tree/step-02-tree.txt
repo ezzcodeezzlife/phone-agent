@@ -1,0 +1,8 @@
+== System: com.android.systemui ==
+[1] TextView "11:42" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Android System notification:" @(148,47)
+[4] ImageView "Do Not Disturb" @(570,47)
+[5] ImageView "Wifi signal full." @(606,46)
+[6] FrameLayout "Phone signal full." @(632,47)
+[7] LinearLayout "Battery 100 percent." @(663,47)

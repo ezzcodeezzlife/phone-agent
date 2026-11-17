@@ -1,0 +1,13 @@
+{
+  "task": "Stelle in der Uhr-App einen Wecker für 7:30 Uhr mit der Bezeichnung Agent Test screenshot.",
+  "mode": "screenshot",
+  "model": "gpt-6.1-terra",
+  "effort": "low",
+  "steps": 11,
+  "seconds": 45.461,
+  "llm_seconds": 30.552,
+  "input_tokens": 28119,
+  "output_tokens": 360,
+  "success": true,
+  "answer": "Der Wecker für 7:30 Uhr mit der Bezeichnung „Agent Test screenshot“ ist gestellt und aktiviert."
+}

@@ -1,0 +1,23 @@
+== System: com.android.systemui ==
+[1] TextView "11:44" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Do Not Disturb" @(570,47)
+[5] ImageView "Wifi signal full." @(606,46)
+[6] FrameLayout "Phone signal full." @(632,47)
+[7] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.google.android.deskclock "World Clock" ==
+[8] TextView "World Clock" @(148,150)
+[9] ImageView "More options" click,long @(678,150)
+[10] GridView "#cities" scroll @(360,834) size 720x1255
+[11] TextView "11:44 AM" @(360,330)
+[12] TextView "Tue, Nov 17" @(360,491)
+[13] TextView "Tue, Nov 17" @(360,504)
+[14] TextView "No locations" @(360,901)
+[15] Button "Add city" click @(622,1364)
+[16] FrameLayout "Alarms" click @(72,1518)
+[17] FrameLayout "World Clock" selected @(216,1518)
+[18] TextView "World Clock" selected @(215,1549)
+[19] FrameLayout "Timers" click @(360,1518)
+[20] FrameLayout "Stopwatch" click @(504,1518)
+[21] FrameLayout "Bedtime" click @(648,1518)

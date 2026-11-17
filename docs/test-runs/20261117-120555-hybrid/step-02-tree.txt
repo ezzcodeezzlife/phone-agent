@@ -1,0 +1,22 @@
+== System: com.android.systemui ==
+[1] TextView "12:06" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Android System notification:" @(148,47)
+[4] ImageView "Wifi signal full." @(606,46)
+[5] FrameLayout "Phone signal full." @(632,47)
+[6] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.ziggoapp.app "Zigarettenautomat Karte" ==
+[7] WebView scroll,focused @(360,743) size 720x1298
+[8] View click @(360,743)
+[9] View "#__next" click @(360,743)
+[10] View "Zigarettenautomat finden" click @(202,360)
+[11] TextView "Zigarettenautomat in der Nähe" @(360,521)
+[12] TextView "Ein praktischer und zuverlässiger Weg um Zigarettenautomaten in deiner Nähe zu finden" @(360,710)
+[13] View "Zigarettenautomaten Karte" click @(275,910)
+[14] View "Automat aufstellen" click @(219,1028)
+[15] View "App screenshot" click @(380,1289)
+[16] View "Teamgeist, der verbindet" click @(245,1471)
+[17] View "Bringen Sie Ihre Ideen bei uns ein. Mit flachen Hierarchien & echtem Vertrauen." click @(350,1528)
+[18] View "#abgc" click @(690,1406)
+[19] Button "#cbb" click @(704,1406)
+[20] TextView "Test Ad" @(359,1409)

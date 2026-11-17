@@ -1,0 +1,14 @@
+{
+  "task": "Öffne die App Zigarettenautomat Karte und sag mir, welche Menüpunkte im Menü oben rechts (☰) stehen.",
+  "mode": "auto",
+  "model": "gpt-6.1-terra",
+  "effort": "low",
+  "steps": 5,
+  "seconds": 26.546,
+  "llm_seconds": 15.957,
+  "input_tokens": 12101,
+  "output_tokens": 172,
+  "screenshots_sent": 2,
+  "success": true,
+  "answer": "Im Menü oben rechts stehen:\n\n- Home\n- Zigarettenautomat Karte\n- Automaten aufstellen\n- Blog\n- WhatsApp Kanal"
+}

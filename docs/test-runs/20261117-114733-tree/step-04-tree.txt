@@ -1,0 +1,22 @@
+== System: com.android.systemui ==
+[1] TextView "11:47" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Wifi signal full." @(606,46)
+[5] FrameLayout "Phone signal full." @(632,47)
+[6] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.google.android.settings.intelligence "Settings Services" ==
+[7] ImageButton "Back" click @(42,157)
+[8] EditText "Android version" hint="Search settings" click,long,edit @(352,157)
+[9] ImageButton "Clear text" click @(670,157)
+[10] ScrollView "#search_scrollview" scroll @(360,919) size 720x1393
+[11] LinearLayout "Android version | About emulated device" click @(360,296)
+[12] LinearLayout "Baseband version | About emulated device > Android version" click @(360,445)
+[13] LinearLayout "Android %s | Storage" click @(360,594)
+[14] LinearLayout "Kernel version | About emulated device > Android version" click @(360,742)
+[15] LinearLayout "Android security update | About emulated device > Android version" click @(360,891)
+[16] LinearLayout "Model | About emulated device" click @(360,1040)
+[17] LinearLayout "IMEI | About emulated device" click @(360,1188)
+[18] LinearLayout "IMEI" click @(360,1318)
+[19] LinearLayout "Software updates | System" click @(360,1446)
+[20] LinearLayout "Search Support for 'Android version'" click @(360,1568)

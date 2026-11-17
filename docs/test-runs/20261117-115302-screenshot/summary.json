@@ -1,0 +1,13 @@
+{
+  "task": "Finde in den Einstellungen heraus, welche Android-Version und welches Sicherheitsupdate auf dem Gerät installiert sind.",
+  "mode": "screenshot",
+  "model": "gpt-6.1-terra",
+  "effort": "low",
+  "steps": 4,
+  "seconds": 18.602,
+  "llm_seconds": 11.352,
+  "input_tokens": 10114,
+  "output_tokens": 136,
+  "success": true,
+  "answer": "Auf dem Gerät ist Android 15 installiert. Das Android-Sicherheitsupdate ist vom 5. September 2024."
+}

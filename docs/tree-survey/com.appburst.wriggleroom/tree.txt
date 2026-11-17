@@ -1,0 +1,19 @@
+foreground: com.appburst.wriggleroom
+elements: 14
+
+== System: com.android.systemui ==
+[1] TextView "11:49" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Wifi signal full." @(606,46)
+[5] FrameLayout "Phone three bars." @(632,47)
+[6] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.appburst.wriggleroom "Wriggle Room" ==
+[7] TextView "120" @(119,153)
+[8] TextView "/ 180" @(182,153)
+[9] Button "Settings" click @(653,154)
+[10] View "W r i g g l e R o o m" @(359,513)
+[11] Button "Play Mossy Hollow · 7" click @(359,1220)
+[12] Button "Daily #23 · Easy 6" click @(186,1367)
+[13] Button "Endless 14 dug" click @(531,1367)
+[14] Button "Wardrobe" click @(359,1496)

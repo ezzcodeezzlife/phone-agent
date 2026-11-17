@@ -1,0 +1,23 @@
+== System: com.android.systemui ==
+[1] TextView "11:45" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Do Not Disturb" @(570,47)
+[5] ImageView "Wifi signal full." @(606,46)
+[6] FrameLayout "Phone signal full." @(632,47)
+[7] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.android.settings "Do Not Disturb" ==
+[8] ScrollView "#content_parent" scroll @(360,834) size 720x1479
+[9] FrameLayout "Do Not Disturb" @(360,251)
+[10] ImageButton "Navigate up" click @(48,143)
+[11] RecyclerView "#recycler_view" scroll,focused @(360,990) size 720x1166
+[12] TextView "Only get notified by important people and apps" @(380,466)
+[13] Button "Turn off now" click @(148,568)
+[14] TextView "What can interrupt Do Not Disturb" @(366,710)
+[15] LinearLayout "People | None" click,disabled @(360,810)
+[16] LinearLayout "Apps | No apps can interrupt" click,disabled @(360,948)
+[17] LinearLayout "Alarms & other interruptions | Nothing can interrupt" click,disabled @(360,1085)
+[18] TextView "General" @(366,1212)
+[19] LinearLayout "Schedules | None" click @(360,1312)
+[20] LinearLayout "Duration for Quick Settings | Until you turn off" click @(360,1450)
+[21] LinearLayout "Display options for filtered notifications" click @(360,1546)

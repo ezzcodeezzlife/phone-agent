@@ -1,0 +1,14 @@
+foreground: com.ziggoapp.app
+elements: 9
+
+== System: com.android.systemui ==
+[1] TextView "11:49" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Wifi signal full." @(606,46)
+[5] FrameLayout "Phone three bars." @(632,47)
+[6] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.ziggoapp.app "Zigarettenautomat Karte" ==
+[7] WebView click @(360,743)
+[8] WebView click @(360,1504)
+[9] TextView "Test Ad" @(359,1409)

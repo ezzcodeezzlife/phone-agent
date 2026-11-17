@@ -1,0 +1,13 @@
+{
+  "task": "Erstelle im Kalender einen Termin morgen um 15:00 Uhr mit dem Titel Phone Agent Test (Dauer 1 Stunde) und speichere ihn.",
+  "mode": "tree",
+  "model": "gpt-6.1-terra",
+  "effort": "low",
+  "steps": 6,
+  "seconds": 25.784,
+  "llm_seconds": 17.165,
+  "input_tokens": 12216,
+  "output_tokens": 210,
+  "success": false,
+  "answer": "Der Termin konnte nicht erstellt werden, weil auf dem Gerät noch kein Kalender synchronisiert ist. Bitte melde dich bei Google an bzw. synchronisiere einen Kalender und versuche es erneut."
+}

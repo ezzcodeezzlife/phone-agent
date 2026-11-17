@@ -1,0 +1,24 @@
+foreground: tech.butterfly.app
+elements: 19
+
+== System: com.android.systemui ==
+[1] TextView "11:50" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Wifi signal full." @(606,46)
+[5] FrameLayout "Phone signal full." @(632,47)
+[6] LinearLayout "Battery 100 percent." @(663,47)
+== App: tech.butterfly.app "Manus" ==
+[7] ImageView "Welcome to Manus" long @(360,493)
+[8] ImageView "Continue with Google" click @(360,933)
+[9] ImageView "Continue with Microsoft" click @(360,1031)
+[10] ImageView "Continue with Apple" click @(360,1129)
+[11] View "OR" @(360,1220)
+[12] ImageView "Continue with Email" click @(360,1311)
+[13] View "Was your previous account deleted?" @(274,1407)
+[14] Button "Restore account" click @(554,1407)
+[15] View "By continuing, you agree to our" @(219,1505)
+[16] Button "Terms of Service" click @(474,1505)
+[17] View "and have read our" @(406,1521)
+[18] Button "Privacy Policy" click @(308,1536)
+[19] View ". © 2026 Manus AI" @(480,1536)

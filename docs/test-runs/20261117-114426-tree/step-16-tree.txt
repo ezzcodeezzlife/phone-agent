@@ -1,0 +1,21 @@
+== System: com.android.systemui ==
+[1] TextView "11:45" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Do Not Disturb" @(570,47)
+[5] ImageView "Wifi signal full." @(606,46)
+[6] FrameLayout "Phone signal full." @(632,47)
+[7] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.android.settings "Settings" ==
+[8] ScrollView "#settings_homepage_container" scroll @(385,869) size 720x1479
+[9] ImageView "Profile picture, double tap to open Google Account" click @(661,270)
+[10] TextView "Settings" @(182,354)
+[11] ViewGroup "Search settings" click @(385,484)
+[12] ScrollView "#main_content_scrollable_container" scroll @(385,1083) size 720x1051
+[13] LinearLayout "Network & internet | Mobile, Wi‑Fi, hotspot" click @(385,634)
+[14] LinearLayout "Connected devices | Bluetooth, pairing" click @(385,788)
+[15] LinearLayout "Apps | Assistant, recent apps, default apps" click @(385,942)
+[16] LinearLayout "Notifications | Notification history, conversations" click @(385,1096)
+[17] LinearLayout "Battery" click @(385,1250)
+[18] LinearLayout "Storage | 97% used - 431 MB free" click @(360,1369)
+[19] LinearLayout "Sound & vibration | Volume, haptics, Do Not Disturb" click @(360,1510)

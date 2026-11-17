@@ -1,0 +1,16 @@
+foreground: com.android.chrome
+elements: 11
+
+== System: com.android.systemui ==
+[1] TextView "11:49" @(48,46)
+[2] ImageView "Android System notification: Storage space running out" @(110,47)
+[3] ImageView "Google Play services notification: Sign in required" @(148,47)
+[4] ImageView "Security & privacy notification: Set a screen lock" @(187,47)
+[5] ImageView "Wifi signal full." @(606,46)
+[6] FrameLayout "Phone signal full." @(632,47)
+[7] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.android.chrome ==
+[8] TextView "Chrome notifications make things easier" @(360,968)
+[9] TextView "You’ll be able to easily manage media controls, Incognito sessions, downloads and more" @(360,1076)
+[10] Button "No thanks" click @(384,1181)
+[11] Button "Continue" click @(570,1181)

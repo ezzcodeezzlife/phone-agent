@@ -1,0 +1,13 @@
+{
+  "task": "Stelle in der Uhr-App einen Wecker für 7:30 Uhr mit der Bezeichnung Agent Test tree.",
+  "mode": "tree",
+  "model": "gpt-6.1-terra",
+  "effort": "low",
+  "steps": 30,
+  "seconds": 137.538,
+  "llm_seconds": 91.019,
+  "input_tokens": 59772,
+  "output_tokens": 1045,
+  "success": false,
+  "answer": "Abgebrochen: maximale Schrittzahl (30) erreicht."
+}

@@ -1,0 +1,22 @@
+foreground: com.appburst.pinfall
+elements: 17
+
+== System: com.android.systemui ==
+[1] TextView "11:49" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Wifi signal full." @(606,46)
+[5] FrameLayout "Phone signal full." @(632,47)
+[6] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.appburst.pinfall ==
+[7] TextView "Welcome to Publisher Test Ads" @(360,297)
+[8] TextView "Publisher Test Ads asks for your consent to use your personal data to:" @(360,373)
+[9] View "Personalised advertising and content, advertising and content measurement, audience research and ser…" @(360,505)
+[10] View "Store and/or access information on a device" @(360,604)
+[11] Button "Learn more" click @(360,667)
+[12] TextView "Your personal data will be processed and information from your device (cookies, unique identifiers, …" @(349,782)
+[13] Button "List of partners." click @(350,852)
+[14] TextView "Some vendors may process your personal data on the basis of legitimate interest, which you can objec…" @(360,971)
+[15] Button "Consent" click @(360,1126)
+[16] Button "Do not consent" click @(360,1220)
+[17] Button "Manage options" click @(360,1315)

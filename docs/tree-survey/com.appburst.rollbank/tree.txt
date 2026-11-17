@@ -1,0 +1,21 @@
+foreground: com.appburst.rollbank
+elements: 16
+
+== System: com.android.systemui ==
+[1] TextView "11:50" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Wifi signal full." @(606,46)
+[5] FrameLayout "Phone signal full." @(632,47)
+[6] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.appburst.rollbank "Rollbank" ==
+[7] TextView "Rollbank" @(360,241)
+[8] TextView "Roll the dice. Keep the points. Bank before you farkle." @(360,376)
+[9] Button "Resume game, Turn 2" click @(360,1023)
+[10] Button "New game" click @(360,1166)
+[11] Button "Stats" click @(114,1448)
+[12] Button "How to play" click @(360,1448)
+[13] Button "Settings" click @(606,1448)
+[14] TextView "Stats" @(113,1525)
+[15] TextView "How to play" @(359,1524)
+[16] TextView "Settings" @(606,1525)

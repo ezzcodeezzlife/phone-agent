@@ -1,0 +1,17 @@
+== System: com.android.systemui ==
+[1] TextView "11:47" @(48,46)
+[2] ImageView "Google Play services notification: Sign in required" @(110,47)
+[3] ImageView "Security & privacy notification: Set a screen lock" @(148,47)
+[4] ImageView "Wifi signal full." @(606,46)
+[5] FrameLayout "Phone signal full." @(632,47)
+[6] LinearLayout "Battery 100 percent." @(663,47)
+== App: com.android.settings "Android version" ==
+[7] ScrollView "#content_parent" scroll @(360,834) size 720x1479
+[8] FrameLayout "Android version" @(360,143)
+[9] ImageButton "Navigate up" click @(48,143)
+[10] LinearLayout "Android version | 15" click,long @(360,261)
+[11] LinearLayout "Android security update | September 5, 2024" click,long @(360,398)
+[12] LinearLayout "Google Play system update | July 1, 2024" long @(360,536)
+[13] LinearLayout "Baseband version | 1.0.0.0" long @(360,673)
+[14] LinearLayout "Kernel version | 6.6.30-android15-8-gdd9c02ccfe27-ab11987101 #1 Tue Jun 18 20:50:32 UTC 2024" long @(360,824)
+[15] LinearLayout "Build number | AE3A.240806.036" long @(360,976)
