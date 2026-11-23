@@ -23,7 +23,9 @@ import java.util.UUID
  * https://developers.openai.com/siwc/token-sharing-open-source
  *
  * Redirect: an HTTP loopback listener on 127.0.0.1 inside the app (Chrome on the same phone
- * reaches it). For emulator tests the browser can also run on the PC with `adb forward tcp:1455 tcp:1455`.
+ * reaches it). While the browser is in front, [SignInService] keeps the app process running; without
+ * it Android freezes the backgrounded app and the redirect page loads forever.
+ * For emulator tests the browser can also run on the PC with `adb forward tcp:1455 tcp:1455`.
  */
 object Auth {
     const val APP_NAME = "Phone Agent"
@@ -38,7 +40,9 @@ object Auth {
     const val USAGE_URL = "https://chatgpt.com/settings/usage"
 
     private lateinit var prefs: SharedPreferences
-    @Volatile private var server: ServerSocket? = null
+    /** Ends the sign-in that is currently waiting for its callback (closes its listener, wakes its thread). */
+    @Volatile private var cancelPending: (() -> Unit)? = null
+    private val CANCELLED: Map<String, String> = HashMap()
 
     fun init(ctx: Context) {
         if (!::prefs.isInitialized) prefs = ctx.applicationContext.getSharedPreferences("auth", Context.MODE_PRIVATE)
@@ -61,16 +65,18 @@ object Auth {
     /**
      * Starts the loopback listener, hands the authorize URL to [onUrl] (caller opens a browser) and
      * reports completion via [onDone] (null = success, else an error message). Runs on a background thread.
+     * A newer sign-in supersedes a pending one; the superseded one ends without calling [onDone].
      */
     fun startLogin(onUrl: (String) -> Unit, onDone: (String?) -> Unit) {
         Thread {
+            var ss: ServerSocket? = null
             try {
-                server?.close()
+                cancelPending?.invoke()
                 val loopback = InetAddress.getByName("127.0.0.1")
-                val ss = try { ServerSocket(1455, 8, loopback) } catch (e: Exception) { ServerSocket(0, 8, loopback) }
-                server = ss
-                ss.soTimeout = 10 * 60_000
-                val redirect = "http://127.0.0.1:${ss.localPort}/auth/callback"
+                val server = try { ServerSocket(1455, 8, loopback) } catch (e: Exception) { ServerSocket(0, 8, loopback) }
+                ss = server
+                server.soTimeout = 10 * 60_000
+                val redirect = "http://127.0.0.1:${server.localPort}/auth/callback"
                 val state = random(32)
                 val nonce = random(32)
                 val verifier = random(32)
@@ -100,9 +106,9 @@ object Auth {
                 // Serve until the callback arrives. Each connection gets its own thread: browsers open
                 // idle pre-connections and ask for /favicon.ico, neither may block or abort the sign-in.
                 val got = java.util.concurrent.LinkedBlockingQueue<Map<String, String>>()
-                Thread {
-                    while (!ss.isClosed) {
-                        val s = try { ss.accept() } catch (_: Exception) { break }
+                val acceptor = Thread {
+                    while (!server.isClosed) {
+                        val s = try { server.accept() } catch (_: Exception) { break }
                         Thread {
                             try {
                                 s.soTimeout = 30_000
@@ -120,10 +126,20 @@ object Auth {
                             }
                         }.start()
                     }
-                }.start()
+                }
+                // close() only signals the thread blocked in accept(); port 1455 is free once that thread
+                // has left, so wait for it before a new sign-in binds the port again.
+                val cancel = {
+                    got.offer(CANCELLED)
+                    try { server.close() } catch (_: Exception) {}
+                    acceptor.join(2_000)
+                }
+                cancelPending = cancel
+                acceptor.start()
                 val query = got.poll(10, java.util.concurrent.TimeUnit.MINUTES)
-                ss.close()
-                server = null
+                server.close()
+                if (cancelPending === cancel) cancelPending = null
+                if (query === CANCELLED) return@Thread
                 if (query == null) throw IllegalStateException("Timed out: no response from the browser")
 
                 if (query["state"] != state) throw IllegalStateException("state does not match")
@@ -149,7 +165,7 @@ object Auth {
                     if (tok.body.contains("invalid_grant")) {
                         throw IllegalStateException("OpenAI rejected the sign-in (invalid_grant). Usually this means a ChatGPT account without Plus/Pro.")
                     }
-                    throw IllegalStateException("Token-Austausch ${tok.code}: ${tok.body.take(300)}")
+                    throw IllegalStateException("Token exchange ${tok.code}: ${tok.body.take(300)}")
                 }
                 val j = JSONObject(tok.body)
                 val claims = verifyIdToken(j.getString("id_token"), issued, nonce)
@@ -165,8 +181,7 @@ object Auth {
                 saveTokens(j)
                 onDone(null)
             } catch (e: Exception) {
-                try { server?.close() } catch (_: Exception) {}
-                server = null
+                try { ss?.close() } catch (_: Exception) {}
                 onDone(e.message ?: e.toString())
             }
         }.start()
@@ -186,7 +201,7 @@ object Auth {
         ))
         if (r.code != 200) {
             if (r.code in 400..499) clearTokens()   // rejected refresh token is gone for good
-            throw IllegalStateException("Token-Refresh ${r.code}: ${r.body.take(200)}")
+            throw IllegalStateException("Token refresh ${r.code}: ${r.body.take(200)}")
         }
         val j = JSONObject(r.body)
         saveTokens(j)
@@ -225,7 +240,7 @@ object Auth {
         require(parts.size == 3) { "Invalid ID token" }
         val header = JSONObject(String(b64urlDecode(parts[0])))
         val payload = JSONObject(String(b64urlDecode(parts[1])))
-        require(header.optString("alg") == "RS256") { "Unerwarteter Token-Algorithmus ${header.optString("alg")}" }
+        require(header.optString("alg") == "RS256") { "Unexpected token algorithm ${header.optString("alg")}" }
         val jwks = Net.get(JWKS)
         require(jwks.code == 200) { "JWKS ${jwks.code}" }
         val keys = JSONObject(jwks.body).getJSONArray("keys")
@@ -242,14 +257,14 @@ object Auth {
         sig.initVerify(pub)
         sig.update("${parts[0]}.${parts[1]}".toByteArray(Charsets.US_ASCII))
         require(sig.verify(b64urlDecode(parts[2]))) { "Invalid ID token signature" }
-        require(payload.optString("iss") == ISSUER) { "ID-Token: falscher Issuer" }
+        require(payload.optString("iss") == ISSUER) { "ID token: wrong issuer" }
         val aud = payload.opt("aud")
         val audOk = when (aud) {
             is String -> aud == clientId
             is org.json.JSONArray -> (0 until aud.length()).any { aud.optString(it) == clientId }
             else -> false
         }
-        require(audOk) { "ID-Token: falsche Audience" }
+        require(audOk) { "ID token: wrong audience" }
         require(payload.optLong("exp") * 1000 > System.currentTimeMillis() - 5_000) { "ID token expired" }
         require(payload.optString("nonce") == nonce) { "ID token does not belong to this sign-in" }
         return payload

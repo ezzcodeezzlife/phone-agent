@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- SignInService: keeps the app running while the browser handles the ChatGPT sign-in. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- open_app needs to see launchable apps; sign-in needs a browser. -->
     <queries>
@@ -38,6 +41,15 @@
                 <data android:scheme="phoneagent" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".SignInService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the OAuth loopback redirect listener reachable while the user signs in in the browser" />
+        </service>
 
         <service
             android:name=".AgentService"

@@ -1,12 +1,14 @@
 package dev.phoneagent
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -35,6 +37,8 @@ class MainActivity : Activity() {
     private lateinit var prefs: SharedPreferences
     private lateinit var a11yText: TextView
     private lateinit var a11yBtn: Button
+    private lateinit var a11yHint: TextView
+    private lateinit var appInfoBtn: Button
     private lateinit var accountText: TextView
     private lateinit var loginBtn: Button
     private lateinit var usageLink: TextView
@@ -117,8 +121,19 @@ class MainActivity : Activity() {
         // 1) The one switch
         val s1 = section("1 · Accessibility", col)
         a11yText = label("")
-        a11yBtn = button("Turn on accessibility") { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-        s1.addView(a11yText); s1.addView(a11yBtn)
+        a11yBtn = button("Turn on accessibility") { openAccessibilitySettings() }
+        a11yHint = label(
+            "Then tap Phone Agent and switch it on. On some phones it sits under \"Downloaded apps\", " +
+                "\"Installed apps\" or \"Installed services\"." +
+                if (Build.VERSION.SDK_INT >= 33) "\n\nSwitch greyed out or \"Restricted setting\"? Android blocks this for apps " +
+                    "installed outside the Play Store until you allow it: App info → ⋮ (top right) → " +
+                    "\"Allow restricted settings\", then try again." else "",
+            13f, color = Color.rgb(95, 99, 104),
+        )
+        appInfoBtn = button("Open app info") {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+        }
+        s1.addView(a11yText); s1.addView(a11yBtn); s1.addView(a11yHint); s1.addView(appInfoBtn)
 
         // 2) Sign in with ChatGPT
         val s2 = section("2 · ChatGPT account", col)
@@ -200,6 +215,8 @@ class MainActivity : Activity() {
         val svc = AgentService.instance
         a11yText.text = if (svc != null) "✓ On: the agent can read and operate the screen." else "Off. Switch on \"Phone Agent\" once under Accessibility."
         a11yBtn.visibility = if (svc != null) View.GONE else View.VISIBLE
+        a11yHint.visibility = a11yBtn.visibility
+        appInfoBtn.visibility = if (svc == null && Build.VERSION.SDK_INT >= 33) View.VISIBLE else View.GONE
         if (Auth.signedIn) {
             accountText.text = "✓ Signed in as ${Auth.email ?: "?"}" + if (Auth.planEnabled) "" else " (plan usage not allowed)"
             loginBtn.text = "Sign out"
@@ -256,8 +273,22 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- actions
 
+    /**
+     * Android has no public intent that opens one service's switch: ACCESSIBILITY_DETAILS_SETTINGS needs
+     * a permission only system apps and app stores hold (checked through SDK 37). The next best thing is
+     * the accessibility list with our entry as the highlight key; AOSP-based Settings scroll to it and flash it.
+     */
+    private fun openAccessibilitySettings() {
+        val key = ComponentName(this, AgentService::class.java).flattenToString()
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .putExtra(":settings:fragment_args_key", key)
+            .putExtra(":settings:show_fragment_args", Bundle().apply { putString(":settings:fragment_args_key", key) })
+        try { startActivity(intent) } catch (_: Exception) { toast("Accessibility settings not found") }
+    }
+
     private fun startLogin(openBrowser: Boolean) {
         accountText.text = "Signing in: please confirm in the browser…"
+        SignInService.start(this)
         Auth.startLogin(
             onUrl = { url ->
                 // Debug builds log the URL so the sign-in can also be done in a desktop browser (adb forward tcp:1455 tcp:1455).
@@ -269,6 +300,7 @@ class MainActivity : Activity() {
             onDone = { err ->
                 if (err != null) AgentBus.log("Sign-in failed: $err") else AgentBus.log("Signed in as ${Auth.email}")
                 main.post {
+                    SignInService.stop()
                     refresh()
                     if (err == null) fetchModels() else toast(err)
                 }
