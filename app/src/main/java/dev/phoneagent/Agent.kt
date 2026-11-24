@@ -11,6 +11,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 /** How the screen is shown to the model. */
 enum class Mode(val key: String, val label: String) {
@@ -33,32 +35,135 @@ object Compat {
 
 /**
  * The agent loop: observe the screen → ask the model for the next action(s) → execute → repeat.
- * Every step is a fresh, self-contained request (task + action log + current screen), so no
+ * Every step is a fresh, self-contained request (task + user messages + action log + current screen), so no
  * server-side conversation state is needed (the plan route requires store=false anyway).
+ *
+ * The user can steer while it runs: messages (typed or spoken) go into the next request, pause holds the loop,
+ * and touching the screen holds it until the user stops. Any interruption drops actions that were planned for the
+ * old screen, so the model always decides on what is on screen now.
  */
 class Agent(
     private val svc: AgentService,
-    private val task: String,
+    val task: String,
     private val mode: Mode,
-    private val model: String,
+    val model: String,
     private val effort: String,
+    private val askFirst: Boolean,
+    /** Earlier task and result when this run is a follow-up. */
+    private val context: String?,
+    private val goHome: Boolean,
 ) {
     companion object { const val MAX_STEPS = 40 }
 
     @Volatile var stopped = false
+    @Volatile var paused = false
+        private set
+    @Volatile var result: String? = null
+        private set
+    @Volatile var success = false
+        private set
+    @Volatile private var step = 0
+    @Volatile private var pending: FeedItem? = null
+
+    private class UserMsg(val text: String, val spoken: Boolean, val step: Int)
+    private val messages = ArrayList<UserMsg>()
+    private val answers = LinkedBlockingQueue<String>()
     private val history = ArrayList<String>()
     private val recentKeys = ArrayList<String>()
+    private val events = JSONArray()
+    private val apps = LinkedHashSet<String>()
     private var lookRequested = false
     private var shotsSent = 0
 
+    // ---------------------------------------------------------------- steering (main thread)
+
+    /** A message from the user while the run is going: refines the task, or answers a pending question. */
+    fun say(text: String, spoken: Boolean) {
+        svc.ui { add(FeedItem(FeedItem.Kind.USER, text, spoken = spoken)) }
+        val p = pending
+        if (p != null) { answer(p, text); return }
+        synchronized(messages) { messages += UserMsg(text, spoken, step) }
+        event(step, "user", text, if (spoken) "spoken" else "typed", true)
+        AgentBus.log("🗣 User: $text")
+        if (paused) togglePause()
+        svc.interrupt("the user sent a message")
+    }
+
+    fun answer(item: FeedItem, a: String) {
+        if (pending !== item || item.answer != null) return
+        item.answer = a
+        svc.ui { update(item) }
+        answers.offer(a)
+    }
+
+    fun togglePause() {
+        if (pending != null) return
+        paused = !paused
+        svc.interrupt(if (paused) "the user paused the run" else "the user resumed the run")
+        svc.ui {
+            add(FeedItem(FeedItem.Kind.NOTE, if (paused) "Paused" else "Continuing"))
+            if (paused) setPhase(Phase.PAUSED, "Paused · tap ▶ to continue") else setPhase(Phase.WORKING, "Continuing…")
+        }
+    }
+
+    private fun holdReason(): String? = when {
+        paused -> "Paused · tap ▶ to continue"
+        svc.listening -> "Listening…"
+        svc.typing -> "Waiting while you type…"
+        Prefs.touchWait && svc.userTouching() -> "Your turn · I'll continue when you stop"
+        else -> null
+    }
+
+    /** Blocks while the user is in control (paused, speaking, typing, touching the screen). */
+    private fun waitWhileHeld() {
+        var shown: String? = null
+        while (!stopped) {
+            val r = holdReason() ?: break
+            if (r != shown) {
+                shown = r
+                if (!paused && !svc.listening) svc.ui { setPhase(Phase.HELD, r) }
+            }
+            Thread.sleep(120)
+        }
+        if (shown != null && !stopped) svc.ui { setPhase(Phase.WORKING, "Continuing…") }
+    }
+
+    /** Shows a question or confirmation and waits for the answer (null when stopped). */
+    private fun ask(item: FeedItem): String? {
+        answers.clear()
+        pending = item
+        svc.ui {
+            add(item)
+            setPhase(Phase.ASKING, if (item.kind == FeedItem.Kind.CONFIRM) "Needs your OK" else "Needs your answer")
+            expandAuto()
+            buzz()
+        }
+        try {
+            while (!stopped) {
+                val a = answers.poll(250, TimeUnit.MILLISECONDS) ?: continue
+                svc.ui { setPhase(Phase.WORKING, "Continuing…"); collapseAuto() }
+                return a
+            }
+            return null
+        } finally {
+            pending = null
+        }
+    }
+
+    private fun event(step: Int, kind: String, text: String, sub: String, ok: Boolean) {
+        synchronized(events) { events.put(JSONObject().put("step", step).put("kind", kind).put("text", text).put("sub", sub).put("ok", ok)) }
+    }
+
+    // ---------------------------------------------------------------- loop
+
     /** AUTO mode: attach a screenshot when the model asked for it, when things go wrong, or when the tree is thin. */
-    private fun needScreenshot(obs: Observation): Boolean = when (mode) {
+    private fun needScreenshot(elements: Map<Int, El>): Boolean = when (mode) {
         Mode.TREE -> false
         Mode.SCREENSHOT, Mode.HYBRID -> true
         Mode.AUTO -> {
             val recent = history.takeLast(2)
             val trouble = recent.isNotEmpty() && recent.all { it.contains("error") || it.contains("[screen did not change]") || it.contains("[REPEATED") }
-            val appInteractive = obs.elements.values.count { it.interactive && it.inApp }
+            val appInteractive = elements.values.count { it.interactive && it.inApp }
             lookRequested || trouble || appInteractive < 3
         }
     }
@@ -76,44 +181,56 @@ class Agent(
     private class Call(val name: String, val args: JSONObject)
 
     fun run(): String {
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        val dir = File(svc.getExternalFilesDir("runs"), "$stamp-${mode.key}").apply { mkdirs() }
+        val startedAt = System.currentTimeMillis()
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(startedAt))
+        val dir = File(Runs.root(svc), "$stamp-${mode.key}").apply { mkdirs() }
         AgentBus.runFile = File(dir, "log.txt")
         AgentBus.log("▶ Task: $task")
-        AgentBus.log("  Mode: ${mode.label} · Model: $model · Effort: $effort")
+        AgentBus.log("  Mode: ${mode.label} · Model: $model · Effort: $effort · Ask first: $askFirst")
+        val modelName = Prefs.modelName(model)
         val t0 = SystemClock.elapsedRealtime()
-        var inTok = 0
-        var outTok = 0
+        var inTok = 0L
+        var outTok = 0L
         var llmMs = 0L
-        var steps = 0
         var answer: String? = null
-        var success = false
+        var status = "failed"
         var lastSig: Int? = null
         var idle = 0
 
-        svc.overlay("Starting…")
-        svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
-        Thread.sleep(900)
+        svc.ui { setPhase(Phase.WORKING, "Starting…"); setDetail("Starting · $modelName") }
+        if (goHome) {
+            svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+            Thread.sleep(900)
+        }
 
-        loop@ for (step in 1..MAX_STEPS) {
-            if (stopped) { answer = "Stopped."; break }
-            steps = step
-            svc.settle()
-            val obs = svc.observe(marks = mode == Mode.HYBRID || mode == Mode.AUTO)
+        loop@ while (step < MAX_STEPS) {
+            // The user may touch the screen while the UI settles, so check again until both are quiet.
+            do {
+                waitWhileHeld()
+                if (stopped) break@loop
+                svc.settle()
+            } while (holdReason() != null)
+            step++
+            val step = step
+            val mark = svc.interrupts.get()
+            val obs = svc.observe(marks = mode == Mode.HYBRID || mode == Mode.AUTO) { needScreenshot(it) }
             obs.jpeg?.let { File(dir, "step-%02d.jpg".format(step)).writeBytes(it) }
             File(dir, "step-%02d-tree.txt".format(step)).writeText(obs.tree)
             if (lastSig != null && obs.signature == lastSig && history.isNotEmpty()) {
                 history[history.lastIndex] = history.last() + "  [screen did not change]"
             }
             lastSig = obs.signature
-            svc.overlay("Step $step · thinking…")
+            val app = svc.appLabel(obs.pkg)
+            if (obs.pkg.isNotEmpty()) apps += app
+            svc.ui { setDetail("Step $step · $app · $modelName"); setStatus("Thinking…") }
 
-            val withShot = needScreenshot(obs) && obs.jpeg != null
+            val withShot = obs.shotForModel
             lookRequested = false
             if (withShot) shotsSent++
             val req = buildRequest(obs, step, withShot)
             val tReq = SystemClock.elapsedRealtime()
             val resp = try { call(req) } catch (e: Exception) {
+                if (stopped) break
                 AgentBus.log("✖ API: ${e.message}")
                 answer = "AI request failed: ${e.message}"
                 break
@@ -145,6 +262,14 @@ class Agent(
             }
             AgentBus.log("— Step $step (${obs.pkg}) · AI ${"%.1f".format(dt / 1000.0)} s · $i in / $o out" + if (withShot && mode == Mode.AUTO) " · 📷" else "")
             texts.forEach { AgentBus.log("💬 ${it.take(400)}") }
+            if (stopped) break
+
+            if (svc.interrupts.get() != mark) {
+                // The user did something while the model was thinking; its plan is for an old screen.
+                AgentBus.log("↺ Re-planning: ${svc.lastInterrupt}")
+                history += "$step. (your planned ${calls.joinToString { it.name }.ifEmpty { "action" }} was not done: ${svc.lastInterrupt} meanwhile. Decide again from the current screen.)"
+                continue@loop
+            }
 
             if (calls.isEmpty()) {
                 history += "$step. (no tool call) ${texts.joinToString(" ").take(200)}"
@@ -153,35 +278,99 @@ class Agent(
             }
             idle = 0
             for (c in calls.take(4)) {
-                if (stopped) break
+                if (stopped) break@loop
+                waitWhileHeld()
+                if (stopped) break@loop
+                if (svc.interrupts.get() != mark) {
+                    AgentBus.log("↺ Skipping the rest of step $step: ${svc.lastInterrupt}")
+                    history += "$step. (skipped your remaining planned actions: ${svc.lastInterrupt}. Decide again from the current screen.)"
+                    continue@loop
+                }
+                when (c.name) {
+                    "finish" -> {
+                        answer = c.args.optString("answer").ifBlank { "Done." }
+                        success = c.args.optBoolean("success", true)
+                        status = if (success) "done" else "failed"
+                        AgentBus.log("➜ ${pretty(c, obs)} → done")
+                        break@loop
+                    }
+                    "ask_user" -> {
+                        val q = c.args.optString("question").ifBlank { "How should I continue?" }
+                        val opts = c.args.optJSONArray("options")?.let { arr -> (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotBlank() } }?.take(4) ?: emptyList()
+                        AgentBus.log("❓ $q ${if (opts.isNotEmpty()) opts.toString() else ""}")
+                        val a = ask(FeedItem(FeedItem.Kind.QUESTION, q, options = opts)) ?: break@loop
+                        AgentBus.log("   ↳ $a")
+                        history += "$step. ask_user(\"${q.take(120)}\") → the user answered: \"${a.take(300)}\""
+                        event(step, "question", q, a, true)
+                        continue@loop
+                    }
+                    "confirm" -> {
+                        val what = c.args.optString("summary").ifBlank { c.args.optString("action") }.ifBlank { "Continue?" }
+                        val button = c.args.optString("button").ifBlank { "Do it" }.take(24)
+                        AgentBus.log("🛡 Confirm: $what [$button]")
+                        val a = ask(FeedItem(FeedItem.Kind.CONFIRM, what, sub = button)) ?: break@loop
+                        val res = when (a) {
+                            Overlay.CONFIRM_YES -> "APPROVED by the user. Do it now (press the final button)."
+                            Overlay.CONFIRM_NO -> "DECLINED by the user. Do NOT do it. Finish and say that it was not done."
+                            else -> "Not approved yet; the user replied: \"${a.take(300)}\". Adjust accordingly and call confirm again before the final action."
+                        }
+                        AgentBus.log("   ↳ $res")
+                        history += "$step. confirm(\"${what.take(160)}\") → $res"
+                        event(step, "confirm", what, when (a) { Overlay.CONFIRM_YES -> "approved"; Overlay.CONFIRM_NO -> "cancelled"; else -> a }, a == Overlay.CONFIRM_YES)
+                        continue@loop
+                    }
+                }
                 val pretty = pretty(c, obs)
-                svc.overlay("Step $step · ${pretty.take(40)}")
+                svc.ui { setStatus(doing(c, obs)) }
                 val res = try { exec(c, obs) } catch (e: Exception) { "error: ${e.message}" }
                 AgentBus.log("➜ $pretty → $res")
+                val ok = !(res.startsWith("error") || res.contains("failed") || res.startsWith("no app") || res.startsWith("unknown"))
+                val why = c.args.optString("why")
+                val text = did(c, obs, res)
+                svc.ui { add(FeedItem(FeedItem.Kind.ACTION, text, sub = why, ok = ok)) }
+                event(step, "action", text, why, ok)
                 // Loop detection: the same action on the same target within the last 6 actions.
                 val key = actionKey(c, obs)
-                val repeated = c.name !in setOf("finish", "wait", "scroll", "swipe", "look") && recentKeys.takeLast(6).contains(key)
+                val repeated = c.name !in setOf("wait", "scroll", "swipe", "look") && recentKeys.takeLast(6).contains(key)
                 recentKeys += key
-                history += "$step. $pretty → $res" + if (repeated) "  [REPEATED – you already did this recently; it did not get you closer. Try a different approach.]" else ""
-                if (c.name == "finish") {
-                    answer = c.args.optString("answer").ifBlank { "Done." }
-                    success = c.args.optBoolean("success", true)
-                    break@loop
+                // Scrolling back and forth on the same list is a loop too.
+                val scrolling = c.name == "scroll" && recentKeys.size >= 6 && recentKeys.takeLast(6).all { it.startsWith("scroll|") }
+                history += "$step. $pretty → $res" + when {
+                    repeated -> "  [REPEATED – you already did this recently; it did not get you closer. Try a different approach.]"
+                    scrolling -> "  [You have only scrolled for 6 actions. Stop scrolling: use what you have seen, or finish with what you know.]"
+                    else -> ""
                 }
                 if (calls.size > 1) svc.settle(1500)
             }
         }
-        if (answer == null) answer = if (stopped) "Stopped." else "Stopped: reached the step limit ($MAX_STEPS)."
+        if (stopped && status != "done") status = "stopped"
+        val finalAnswer = answer ?: if (stopped) "Stopped by you." else "Stopped: reached the step limit ($MAX_STEPS)."
         val secs = (SystemClock.elapsedRealtime() - t0) / 1000.0
-        AgentBus.log("■ Result: $answer")
-        AgentBus.log("  $steps steps · ${"%.0f".format(secs)} s total (AI ${"%.0f".format(llmMs / 1000.0)} s) · tokens $inTok in / $outTok out · screenshots sent to AI: $shotsSent")
+        result = finalAnswer
+        AgentBus.log("■ Result: $finalAnswer")
+        AgentBus.log("  $step steps · ${"%.0f".format(secs)} s total (AI ${"%.0f".format(llmMs / 1000.0)} s) · tokens $inTok in / $outTok out · screenshots sent to AI: $shotsSent")
+        val msgs = JSONArray()
+        synchronized(messages) { messages.forEach { msgs.put(JSONObject().put("step", it.step).put("text", it.text).put("spoken", it.spoken)) } }
         File(dir, "summary.json").writeText(JSONObject()
-            .put("task", task).put("mode", mode.key).put("model", model).put("effort", effort)
-            .put("steps", steps).put("seconds", secs).put("llm_seconds", llmMs / 1000.0)
+            .put("task", task).put("mode", mode.key).put("model", model).put("effort", effort).put("ask_first", askFirst)
+            .put("started_at", startedAt).put("ended_at", System.currentTimeMillis()).put("status", status)
+            .put("steps", step).put("seconds", secs).put("llm_seconds", llmMs / 1000.0)
             .put("input_tokens", inTok).put("output_tokens", outTok)
-            .put("screenshots_sent", shotsSent).put("success", success).put("answer", answer).toString(2))
+            .put("screenshots_sent", shotsSent).put("success", success).put("answer", finalAnswer)
+            .put("apps", JSONArray(apps.toList())).put("messages", msgs).put("events", synchronized(events) { JSONArray(events.toString()) })
+            .apply { if (context != null) put("follow_up_of", context) }
+            .toString(2))
         AgentBus.runFile = null
-        return answer
+        val meta = "$step steps · ${duration(secs)} · ${compact(inTok + outTok)} tokens"
+        val title = when (status) { "done" -> "Done"; "stopped" -> "Stopped"; else -> "Didn't finish" }
+        svc.ui {
+            add(FeedItem(FeedItem.Kind.RESULT, finalAnswer, sub = meta, options = listOf(title), ok = status == "done"))
+            setPhase(if (status == "done") Phase.DONE else Phase.FAILED, finalAnswer.lineSequence().first().take(120))
+            setDetail(meta)
+            expand()
+        }
+        Runs.prune(svc)
+        return finalAnswer
     }
 
     // ---------------------------------------------------------------- request
@@ -200,8 +389,10 @@ Prefer element ids. Use x,y pixel coordinates for things that have no box/id."""
 grouped by window (App, Keyboard, System). Prefer element ids for tap / long_press / type_text / scroll. Coordinates are in a ${'$'}W x ${'$'}H space.
 Some turns also include a screenshot of the same screen with numbered boxes matching the ids. If what you need is NOT in the list (icons without labels such as ☰ menus, images, maps, canvas or game content) and no screenshot is attached, call look; on the next turn tap it with x,y from the screenshot."""
         }
+        val safety = if (askFirst) """- Safety: never send messages or emails, post, buy, pay, delete data or change account, security, privacy or payment settings unless the task or the user's messages explicitly ask for exactly that. When they do, prepare everything, then call confirm with exactly what will happen (recipient and text, amount, what gets deleted) BEFORE pressing the final button. Press it only after confirm returned APPROVED; if it was declined, do not do it."""
+        else """- Safety: never send messages or emails, post, buy, pay, delete data or change account, security, privacy or payment settings unless the task or the user's messages explicitly ask for exactly that. When they do, you may complete it without asking."""
         return """You are Phone Agent. You operate the user's Android phone to complete the user's task by calling the phone tools.
-Each turn you receive the task, the log of your previous actions, and the CURRENT screen. Then you act.
+Each turn you receive the task, messages the user sent during the run, the log of your previous actions, and the CURRENT screen. Then you act.
 
 $screen
 
@@ -212,16 +403,25 @@ How to work:
 - Dismiss onboarding screens, tips and permission dialogs in the most neutral way (e.g. "Skip", "Not now", "Allow only while using the app") when they block the task. Ignore banners and notices that do not block the task.
 - Look things up in the apps; do not guess facts.
 - If an ordinary setting blocks the task (e.g. Do Not Disturb prevents creating alarms), change it directly and mention it in your final answer. Do not go back and forth about it.
-- Safety: never send messages or emails, post, buy, pay, delete data or change account, security, privacy or payment settings unless the task explicitly asks for exactly that. If the task requires such a final step, prepare everything, do NOT press the final button, and finish explaining what is ready for the user to confirm.
+- The user watches the run and can steer you at any time. Their messages appear under MESSAGES FROM THE USER; they refine or change the task, and the newest message wins. Act on them right away without commenting.
+- The user may also use the phone themselves during the run. If the screen changed unexpectedly, continue from what you see now.
+- If the task is ambiguous or needs information you cannot find on the phone (which of two matching contacts, what time, which account), call ask_user with one short question and up to 4 short answer options instead of guessing. Do not ask about things you can look up or reasonably decide yourself.
+$safety
 - Never type passwords or one-time codes. If a login is required, finish and tell the user.
-- The small dark "Phone Agent" pill with a Stop button at the top right is your own status overlay; ignore it.
 - When the task is done (or impossible), call finish with success and a short answer in the language of the task. Include any information the user asked for."""
     }
 
     private fun buildRequest(obs: Observation, step: Int, withShot: Boolean): JSONObject {
         val text = StringBuilder()
-            .append("TASK: ").append(task).append("\n\n")
-            .append("PREVIOUS ACTIONS:\n")
+        if (context != null) text.append("CONTEXT: this is a follow-up to an earlier task. ").append(context).append("\n\n")
+        text.append("TASK: ").append(task).append("\n\n")
+        val msgs = synchronized(messages) { messages.toList() }
+        if (msgs.isNotEmpty()) {
+            text.append("MESSAGES FROM THE USER DURING THE RUN (newest last; they refine or override the task):\n")
+            msgs.forEach { text.append("- (before step ").append(it.step + 1).append(") \"").append(it.text).append("\"\n") }
+            text.append('\n')
+        }
+        text.append("PREVIOUS ACTIONS:\n")
         if (history.isEmpty()) text.append("(none yet)\n") else history.takeLast(40).forEach { text.append(it).append('\n') }
         text.append("\nSTEP ").append(step).append(" of max ").append(MAX_STEPS).append(".\n")
         if (step == MAX_STEPS) text.append("This is the LAST step: call finish now and report what was done.\n")
@@ -314,6 +514,17 @@ How to work:
         if (mode == Mode.AUTO) fns.put(fn("look",
             "Get a screenshot (with numbered boxes) of the current screen on your next turn. Use it when the target is not in the element list: unlabeled icons, images, maps, canvas or game content.",
             JSONObject(), listOf()))
+        fns.put(fn("ask_user",
+            "Ask the user a short question when the task is ambiguous or needs information you cannot find on the phone. The run waits for the answer (tap, typed or spoken).",
+            JSONObject().put("question", prop("string", "One short question in the task's language"))
+                .put("options", JSONObject().put("type", "array").put("description", "Up to 4 short answer options (may be empty)")
+                    .put("items", JSONObject().put("type", "string"))),
+            listOf("question", "options")))
+        if (askFirst) fns.put(fn("confirm",
+            "Required right before an irreversible final step (send, post, buy/pay, delete, change account or security settings). Shows the user exactly what will happen and waits for approval.",
+            JSONObject().put("summary", prop("string", "Exactly what will happen, e.g. 'Send \"Running 10 min late\" to Alex Becker in Messages'"))
+                .put("button", prop("string", "Short label of the action, e.g. 'Send', 'Pay 12.90 €', 'Delete'")),
+            listOf("summary", "button")))
         fns.put(fn("finish", "End the task with the final answer for the user (in the task's language).",
             JSONObject().put("success", prop("boolean", "Whether the task was completed")).put("answer", prop("string", "Answer / summary for the user")),
             listOf("success", "answer")))
@@ -464,5 +675,63 @@ How to work:
             }
         }
         return c.name + "(" + parts.joinToString(", ") + ")" + (if (why.isNotBlank()) " – $why" else "")
+    }
+
+    // ---------------------------------------------------------------- texts for the overlay and run history
+
+    private fun targetLabel(c: Call, obs: Observation): String {
+        val a = c.args
+        if (a.has("element") && !a.isNull("element")) {
+            obs.elements[a.optInt("element")]?.label?.substringBefore(" | ")?.trim()?.takeIf { it.isNotEmpty() && !it.startsWith("#") }?.let {
+                return "“" + (if (it.length > 40) it.take(40) + "…" else it) + "”"
+            }
+        }
+        return ""
+    }
+
+    private fun keyText(key: String, past: Boolean) = when (key) {
+        "back" -> if (past) "Went back" else "Going back"
+        "home" -> if (past) "Went to the home screen" else "Going to the home screen"
+        "recents" -> if (past) "Opened recent apps" else "Opening recent apps"
+        "notifications" -> if (past) "Opened notifications" else "Opening notifications"
+        "quick_settings" -> if (past) "Opened quick settings" else "Opening quick settings"
+        "enter" -> if (past) "Pressed Enter" else "Pressing Enter"
+        else -> if (past) "Pressed $key" else "Pressing $key"
+    }
+
+    /** What the agent is doing right now, for the island. */
+    private fun doing(c: Call, obs: Observation): String {
+        val a = c.args
+        val t = targetLabel(c, obs)
+        return when (c.name) {
+            "tap" -> if (t.isEmpty()) "Tapping the screen" else "Tapping $t"
+            "long_press" -> if (t.isEmpty()) "Long-pressing the screen" else "Long-pressing $t"
+            "type_text" -> "Typing “${a.optString("text").take(40)}”"
+            "swipe" -> "Swiping"
+            "scroll" -> "Scrolling ${a.optString("direction", "down")}"
+            "press_key" -> keyText(a.optString("key"), false)
+            "open_app" -> "Opening ${a.optString("name")}"
+            "wait" -> "Waiting for the app"
+            "look" -> "Looking at the screen"
+            else -> c.name
+        }
+    }
+
+    /** What the agent did, for the feed and the run history. */
+    private fun did(c: Call, obs: Observation, res: String): String {
+        val a = c.args
+        val t = targetLabel(c, obs)
+        return when (c.name) {
+            "tap" -> if (t.isEmpty()) "Tapped the screen" else "Tapped $t"
+            "long_press" -> if (t.isEmpty()) "Long-pressed the screen" else "Long-pressed $t"
+            "type_text" -> "Typed “${a.optString("text").take(60)}”" + if (res.contains("enter pressed")) " and pressed Enter" else ""
+            "swipe" -> "Swiped"
+            "scroll" -> "Scrolled ${a.optString("direction", "down")}"
+            "press_key" -> keyText(a.optString("key"), true)
+            "open_app" -> if (res.startsWith("opened ")) "Opened " + res.removePrefix("opened ").substringBefore(" (") else "Couldn't find the app “${a.optString("name")}”"
+            "wait" -> "Waited ${"%.0f".format(a.optDouble("seconds", 1.0).coerceIn(0.2, 5.0))} s"
+            "look" -> "Took a look at the screen"
+            else -> c.name
+        }
     }
 }

@@ -2,15 +2,24 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Voice input (speech-to-text) for tasks and for steering the agent while it works. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- SignInService: keeps the app running while the browser handles the ChatGPT sign-in. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
-    <!-- open_app needs to see launchable apps; sign-in needs a browser. -->
+    <!-- open_app needs to see launchable apps (and the home app); sign-in needs a browser; voice needs the speech service. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
         </intent>
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -22,13 +31,13 @@
         android:allowBackup="false"
         android:icon="@android:drawable/sym_def_app_icon"
         android:label="Phone Agent"
-        android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        android:theme="@style/AppTheme">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize|stateHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

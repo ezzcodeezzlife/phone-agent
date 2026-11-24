@@ -6,7 +6,7 @@ export MSYS_NO_PATHCONV=1
 ADB="${ADB:-adb}"
 MODE="$1"; TASK="$2"; MODEL="${3:-gpt-6.1-terra}"; EFFORT="${4:-low}"
 BASE=/sdcard/Android/data/dev.phoneagent/files/runs
-for p in ${5//,/ }; do $ADB shell am force-stop "$p"; done
+for p in ${5:+${5//,/ }}; do $ADB shell am force-stop "$p"; done
 before=$($ADB shell "ls $BASE 2>/dev/null" | tr -d '\r' | sort | tail -1)
 $ADB shell am start -n dev.phoneagent/.MainActivity --es task "'${TASK//\'/}'" --es mode "$MODE" --es model "$MODEL" --es effort "$EFFORT" --ez run true >/dev/null
 # wait for a new run folder with a summary.json (max 10 min)
