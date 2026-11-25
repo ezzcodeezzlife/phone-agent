@@ -36,6 +36,10 @@ object Prefs {
     var voiceLang: String
         get() = p.getString("voice_lang", "") ?: ""
         set(v) = p.edit().putString("voice_lang", v).apply()
+    /** The language speech recognition heard last time ("automatic" starts with it). */
+    var lastVoiceLang: String
+        get() = p.getString("voice_last", "") ?: ""
+        set(v) = p.edit().putString("voice_last", v).apply()
     var task: String
         get() = p.getString("task", "") ?: ""
         set(v) = p.edit().putString("task", v).apply()

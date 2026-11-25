@@ -24,6 +24,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -40,7 +42,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-/** The app: Home (give a task), Runs (history), Usage, Settings. Plain views, built in code. */
+/** The app: Home (a new task, or the run full screen), Runs (history), Usage, Settings. Plain views, built in code. */
 class MainActivity : Activity() {
     private enum class Tab(val label: String, val icon: String) { HOME("Home", "home"), RUNS("Runs", "runs"), USAGE("Usage", "chart"), SETTINGS("Settings", "settings") }
 
@@ -52,10 +54,21 @@ class MainActivity : Activity() {
     private var showLog = false
     private var runsFilter = "all"
     private var usageDays = 7
-    private var homeScrollY = 0
+    /** Show the run conversation on Home (opened from the overlay's full-screen button). */
+    private var showLive = false
+    private var renderedKey = ""
 
     private var taskField: EditText? = null
     private var micButton: ImageView? = null
+    private var sendButton: ImageView? = null
+    private var liveFeed: FeedView? = null
+    private var liveScroll: ScrollView? = null
+    private var liveTitle: TextView? = null
+    private var liveSub: TextView? = null
+    private var liveDot: StatusDot? = null
+    private var livePause: ImageView? = null
+    private var liveField: EditText? = null
+    private var liveAction: ImageView? = null
     private var logView: TextView? = null
     private var voice: Voice? = null
     private var listenAfterGrant = false
@@ -84,7 +97,11 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         AgentBus.listener = { line -> main.post { logView?.let { it.append("\n$line") } } }
-        AgentBus.statusListener = { main.post { if (!showLog) render() } }
+        AgentBus.statusListener = { main.post { if (!showLog) refresh() } }
+        AgentService.instance?.let { svc ->
+            svc.setAppOpen(true)
+            svc.feedListener = { refreshLive() }
+        }
         render()
         if (Auth.signedIn && Prefs.models().isEmpty()) fetchModels()
     }
@@ -94,6 +111,10 @@ class MainActivity : Activity() {
         AgentBus.listener = null
         AgentBus.statusListener = null
         voice?.cancel()
+        AgentService.instance?.let { svc ->
+            svc.feedListener = null
+            svc.setAppOpen(false)
+        }
     }
 
     // ---------------------------------------------------------------- shell & navigation
@@ -147,6 +168,7 @@ class MainActivity : Activity() {
 
     private fun go(t: Tab) {
         if (t == tab && detail == null && !showLog) return
+        if (t != Tab.HOME && AgentService.instance?.agent == null) showLive = false
         tab = t
         detail = null
         showLog = false
@@ -183,25 +205,34 @@ class MainActivity : Activity() {
         if (!goBack()) @Suppress("DEPRECATION") super.onBackPressed()
     }
 
+    /** What the current screen depends on; a change re-renders it. */
+    private fun screenKey() = "$tab|${detail?.dir}|$showLog|${liveActive()}|${AgentService.instance?.agent != null}|${ready()}|${Auth.signedIn}"
+
+    /** Re-renders when the screen's inputs changed; the run view updates in place. */
+    private fun refresh() {
+        if (screenKey() != renderedKey) render() else refreshLive()
+    }
+
     private fun render() {
-        if (tab == Tab.HOME && detail == null && !showLog) (content.getChildAt(0) as? ScrollView)?.let { homeScrollY = it.scrollY }
         voice?.cancel()
         taskField = null
         micButton = null
+        sendButton = null
         logView = null
+        liveFeed = null; liveScroll = null; liveTitle = null; liveSub = null; liveDot = null; livePause = null; liveField = null; liveAction = null
         content.removeAllViews()
         val v = when {
             showLog -> logScreen()
             detail != null -> detailScreen(detail!!)
             else -> when (tab) {
-                Tab.HOME -> homeScreen()
+                Tab.HOME -> if (liveActive()) liveScreen() else homeScreen()
                 Tab.RUNS -> runsScreen()
                 Tab.USAGE -> usageScreen()
                 Tab.SETTINGS -> settingsScreen()
             }
         }
+        renderedKey = screenKey()
         content.addView(v, FrameLayout.LayoutParams(-1, -1))
-        if (tab == Tab.HOME && detail == null && !showLog) (v as? ScrollView)?.let { s -> s.post { s.scrollTo(0, homeScrollY) } }
         buildNav()
         updateBack()
     }
@@ -310,95 +341,138 @@ class MainActivity : Activity() {
         setOnClickListener { detail = r; render() }
     }
 
-    // ---------------------------------------------------------------- home
+    // ---------------------------------------------------------------- home: a new task
 
     private fun ready() = AgentService.instance != null && Auth.signedIn
 
-    private fun homeScreen() = page {
-        val running = AgentService.instance?.agent
-        addView(LinearLayout(this@MainActivity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(text("Phone Agent", 28f, C.TXT, 700), lp(0, -2, 1f))
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(6), dp(5), dp(12), dp(5))
-                background = pressable(0x12FFFFFF, 16)
-                addView(FrameLayout(this@MainActivity).apply {
-                    background = round(if (Auth.signedIn) 0xFF10A37F.toInt() else C.RAISED, dp(12).toFloat())
-                    addView(icon("bolt", 0xFFFFFFFF.toInt(), 14), FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER))
-                }, LinearLayout.LayoutParams(dp(24), dp(24)))
-                addView(text(if (Auth.signedIn) "ChatGPT" else "Signed out", 13f, C.TXT, 600), lp(-2, -2, left = dp(7)))
-                setOnClickListener { go(Tab.SETTINGS) }
-            })
-        }, lp(top = dp(10)))
+    private fun a11yEnabled(): Boolean {
+        val key = ComponentName(this, AgentService::class.java).flattenToString()
+        val list = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
+        return list.split(':').any { it.equals(key, true) || it.equals("$packageName/.AgentService", true) }
+    }
 
-        val status = when {
-            running != null -> "Running: ${running.task}" to C.ACCENT
-            ready() -> "Ready · accessibility on" to C.OK
-            else -> {
-                val left = listOf(AgentService.instance == null, !Auth.signedIn).count { it }
-                (if (left == 1) "One step left before the first task" else "Two quick steps before the first task") to C.WARN
-            }
+    /** Home shows the run while one is going, or when the overlay's full-screen button opened the app. */
+    private fun liveActive(): Boolean {
+        val svc = AgentService.instance ?: return false
+        return svc.agent != null || (showLive && svc.overlay?.items?.isNotEmpty() == true)
+    }
+
+    private fun homeScreen(): View {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(6), dp(16), dp(12))
         }
-        addView(LinearLayout(this@MainActivity).apply {
+        // Model picker, top left (like a chat app).
+        col.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(StatusDot(this@MainActivity).apply { color = status.second; pulse = running != null }, LinearLayout.LayoutParams(dp(16), dp(16)))
-            addView(text(status.first, 13.5f, status.second, 500, 1), lp(-2, -2, left = dp(6)))
-        }, lp(top = dp(4)))
+            setPadding(dp(10), dp(6), dp(8), dp(6))
+            background = pressable(0x00000000, 18)
+            addView(icon("spark", C.ACCENT, 18).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8) })
+            addView(text(if (Auth.signedIn) Prefs.modelName(Prefs.currentModel()) else "Phone Agent", 16f, C.TXT, 600, 1))
+            if (Auth.signedIn) addView(icon("down", C.SUB, 16).apply { (layoutParams as LinearLayout.LayoutParams).leftMargin = dp(4) })
+            contentDescription = "Model"
+            setOnClickListener { if (Auth.signedIn) pickModel() else go(Tab.SETTINGS) }
+        }, lp(-2, -2, left = -dp(6)))
 
-        if (!ready()) addView(setupCard(), lp(top = dp(16)))
-        addView(askCard(running != null), lp(top = dp(16)))
+        val center = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+        }
+        if (!ready()) {
+            center.addView(setupCard(), lp())
+        } else {
+            center.addView(text("What should I do?", 26f, C.TXT, 650).apply { gravity = Gravity.CENTER }, lp())
+            center.addView(text("I use your apps for you. You can steer, or take over at any time.", 14f, C.SUB).apply {
+                gravity = Gravity.CENTER
+            }, lp(top = dp(6), left = dp(12), right = dp(12)))
+        }
+        col.addView(center, lp(-1, 0, 1f))
 
-        if (running == null) {
-            addView(text("Try", 13f, C.SUB, 600), lp(top = dp(18), bottom = dp(8), left = dp(4)))
-            val tries = listOf("What Android version do I have?", "Set an alarm for 6:45 tomorrow", "Turn on dark mode", "Find the weather in my city")
-            addView(HorizontalScrollView(this@MainActivity).apply {
+        if (ready()) {
+            val tries = listOf("Turn on dark mode", "Set an alarm for 6:45 tomorrow", "What Android version do I have?", "Turn off Bluetooth")
+            col.addView(HorizontalScrollView(this).apply {
                 isHorizontalScrollBarEnabled = false
                 overScrollMode = View.OVER_SCROLL_NEVER
                 addView(LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     tries.forEachIndexed { i, t ->
-                        addView(chip(t) { taskField?.setText(t); taskField?.setSelection(t.length); Prefs.task = t }, lp(-2, -2, left = if (i > 0) dp(8) else 0))
+                        addView(chip(t) { taskField?.setText(t); taskField?.setSelection(t.length) }, lp(-2, -2, left = if (i > 0) dp(8) else 0))
                     }
                 })
-            }, lp(-1, -2))
+            }, lp(top = dp(8), bottom = dp(10)))
         }
+        col.addView(composer())
+        return col
+    }
 
-        val runs = Runs.list(this@MainActivity)
-        val weekAgo = startOfDay(System.currentTimeMillis()) - 6 * DAY
-        val week = runs.filter { it.startedAt >= weekAgo }
-        section("Recent")
-        if (runs.isEmpty()) {
-            addView(group(row(null, "No runs yet", "Your finished tasks show up here, with every step the agent took.")))
-        } else {
-            val rows = runs.take(3).map { runRow(it, showDay = true) as View }.toMutableList()
-            rows += row("chart", "This week: ${week.size} ${if (week.size == 1) "task" else "tasks"} · ${compact(week.sumOf { it.tokens })} tokens",
-                null, icon("right", C.MUTE, 18)) { go(Tab.USAGE) }
-            rows += row("runs", "See all ${runs.size} runs", null, icon("right", C.MUTE, 18), C.ACCENT) { go(Tab.RUNS) }
-            addView(group(*rows.toTypedArray()))
+    private fun composer() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(6), dp(4), dp(8), dp(8))
+        background = round(C.CARD, dp(26).toFloat(), dp(1), C.LINE)
+        val field = EditText(this@MainActivity).apply {
+            setText(Prefs.task)
+            hint = "Tell me what to do…"
+            textSize = 16.5f
+            setTextColor(C.TXT)
+            setHintTextColor(C.MUTE)
+            minLines = 1
+            maxLines = 6
+            gravity = Gravity.TOP or Gravity.START
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            background = null
+            setPadding(dp(12), dp(12), dp(12), dp(8))
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: Editable?) { Prefs.task = s?.toString() ?: ""; updateComposer() }
+            })
         }
+        taskField = field
+        addView(field, lp())
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(chip(if (Prefs.askFirst) "Asks before sending" else "Doesn't ask first", "shield", Prefs.askFirst) {
+                Prefs.askFirst = !Prefs.askFirst; render()
+            }.apply { contentDescription = "Ask before sending, paying or deleting" }, lp(-2, -2, left = dp(6)))
+            addView(View(this@MainActivity), lp(0, 1, 1f))
+            val mic = iconButton("mic", C.TXT, 0x1AFFFFFF, sizeDp = 44, iconDp = 22) {
+                listen(taskField, micButton, "Tell me what to do…") { t -> taskField?.setText(t); taskField?.setSelection(t.length) }
+            }.apply { contentDescription = "Speak a task" }
+            micButton = mic
+            addView(mic)
+            val send = iconButton("arrow_up", C.ON_ACCENT, C.ACCENT, sizeDp = 44, iconDp = 22) { start() }.apply { contentDescription = "Start" }
+            sendButton = send
+            addView(send, lp(dp(44), dp(44), left = dp(8)))
+        }, lp(top = dp(2)))
+        updateComposer()
+    }
+
+    private fun updateComposer() {
+        val send = sendButton ?: return
+        val has = taskField?.text?.isNotBlank() == true
+        send.alpha = if (has && ready()) 1f else 0.35f
     }
 
     private fun setupCard() = card().apply {
-        addView(text("Finish setup", 17f, C.TXT, 650))
-        addView(text("Phone Agent needs one system switch and your ChatGPT account.", 13f, C.SUB), lp(top = dp(2), bottom = dp(4)))
         val a11y = AgentService.instance != null
-        addView(setupStep(1, a11y, "Turn on accessibility", "Lets the agent see the screen and tap for you.", "Turn on") { openAccessibilitySettings() })
-        if (!a11y) {
-            addView(text("Find Phone Agent in the list (on some phones under \"Downloaded apps\" or \"Installed apps\") and switch it on." +
-                if (Build.VERSION.SDK_INT >= 33) " Greyed out or \"Restricted setting\"? Open App info → ⋮ → \"Allow restricted settings\" first." else "",
+        val left = listOf(!a11y, !Auth.signedIn).count { it }
+        addView(text(if (left == 1) "One more step" else "Two quick steps", 20f, C.TXT, 650))
+        addView(text("Then just tell me what to do.", 13.5f, C.SUB), lp(top = dp(2), bottom = dp(4)))
+        val enabledButOff = !a11y && a11yEnabled()
+        addView(setupStep(1, a11y, "Turn on accessibility",
+            if (enabledButOff) "It's switched on but not running. Switch it off and on again." else "Lets the agent see the screen and tap for you.",
+            "Turn on") { openAccessibilitySettings() })
+        if (!a11y && !enabledButOff) {
+            addView(text("Find Phone Agent in the list (on some phones under \"Downloaded apps\") and switch it on." +
+                if (Build.VERSION.SDK_INT >= 33) " Greyed out? Open App info → ⋮ → \"Allow restricted settings\" first." else "",
                 12.5f, C.MUTE), lp(top = dp(2), left = dp(40)))
             if (Build.VERSION.SDK_INT >= 33) addView(text("Open App info", 13f, C.ACCENT, 600).apply {
                 setPadding(0, dp(8), 0, dp(4)); setOnClickListener { openAppInfo() }
             }, lp(-2, -2, left = dp(40)))
         }
         addView(setupStep(2, Auth.signedIn, "Sign in with ChatGPT", "Tasks run on your ChatGPT plan. No API key needed.", "Sign in") { startLogin(true) })
-        if (!Voice.hasPermission(this@MainActivity)) {
-            addView(setupStep(3, false, "Allow the microphone (optional)", "Talk to the agent instead of typing.", "Allow") { requestMic(false) })
-        }
     }
 
     private fun setupStep(n: Int, done: Boolean, title: String, sub: String, button: String, onClick: () -> Unit) = LinearLayout(this).apply {
@@ -418,79 +492,172 @@ class MainActivity : Activity() {
         if (!done) addView(secondaryButton(button, color = C.ACCENT) { onClick() }.apply { minimumHeight = dp(38); setPadding(dp(14), 0, dp(14), 0) })
     }
 
-    private fun askCard(running: Boolean) = card().apply {
-        addView(LinearLayout(this@MainActivity).apply {
+    // ---------------------------------------------------------------- home: the run, full screen
+
+    private fun liveScreen(): View {
+        val svc = AgentService.instance!!
+        val ov = svc.overlay!!
+        val running = svc.agent != null
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(10))
+        }
+        col.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            val dot = StatusDot(this@MainActivity)
+            liveDot = dot
+            addView(dot, LinearLayout.LayoutParams(dp(20), dp(20)))
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(text("What should I do?", 20f, C.TXT, 650))
-                addView(text("Speak or type a task. You can steer while it works.", 13f, C.SUB), lp(top = dp(2)))
-            }, lp(0, -2, 1f))
-        })
-        val field = EditText(this@MainActivity).apply {
-            setText(Prefs.task)
-            hint = "e.g. Set an alarm for 6:45 tomorrow"
-            textSize = 16f
-            setTextColor(C.TXT)
-            setHintTextColor(C.MUTE)
-            minLines = 2
-            maxLines = 6
-            gravity = Gravity.TOP or Gravity.START
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            background = round(C.FIELD, dp(18).toFloat(), dp(1), C.LINE)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-                override fun afterTextChanged(s: Editable?) { Prefs.task = s?.toString() ?: "" }
-            })
-        }
-        taskField = field
-        addView(field, lp(top = dp(14)))
+                liveTitle = text("", 17f, C.TXT, 650, 1).also { addView(it) }
+                liveSub = text("", 13f, C.SUB, 400, 2).also { addView(it, lp(top = dp(1))) }
+            }, lp(0, -2, 1f, left = dp(10), right = dp(6)))
+            if (running) {
+                livePause = iconButton("pause") { svc.agent?.togglePause() }.also { addView(it) }
+                addView(iconButton("stop", C.BAD, 0x26FF6B6B) { svc.stopAgent() }.apply { contentDescription = "Stop" }, lp(dp(40), dp(40), left = dp(6)))
+            } else {
+                addView(chip("New task", "plus") { svc.closeRun(); showLive = false; Prefs.task = ""; render() })
+            }
+        }, lp(top = dp(6)))
 
-        addView(HorizontalScrollView(this@MainActivity).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                addView(chip(Prefs.modelName(Prefs.currentModel()), "spark") { pickModel() })
-                addView(chip("Effort: ${Prefs.effort}") { pickEffort() }, lp(-2, -2, left = dp(8)))
-                addView(chip(if (Prefs.askFirst) "Ask before sending" else "Doesn't ask first", "shield", Prefs.askFirst) {
-                    Prefs.askFirst = !Prefs.askFirst; render()
-                }, lp(-2, -2, left = dp(8)))
-            })
-        }, lp(top = dp(12)))
-
-        addView(LinearLayout(this@MainActivity).apply {
+        if (running) col.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            val mic = iconButton("mic", C.TXT, 0x1AFFFFFF, sizeDp = 52, iconDp = 24) { toggleListening() }.apply { contentDescription = "Speak a task" }
-            micButton = mic
-            addView(mic)
-            if (running) {
-                addView(secondaryButton("Stop the agent", "stop", C.BAD) { AgentService.instance?.stopAgent() }.apply { minimumHeight = dp(52) },
-                    lp(0, -2, 1f, left = dp(10)))
-            } else {
-                addView(primaryButton("Start", "play") { start() }, lp(0, -2, 1f, left = dp(10)))
+            setPadding(dp(14), dp(8), dp(8), dp(8))
+            background = round(0x14FFB547, dp(18).toFloat(), dp(1), 0x40FFB547)
+            addView(icon("pause", C.WARN, 16).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(10) })
+            addView(text("The agent waits while you're in the app.", 13f, C.TXT), lp(0, -2, 1f))
+            addView(secondaryButton("Continue", color = C.ACCENT) { backToRun() }.apply { minimumHeight = dp(36); setPadding(dp(14), 0, dp(14), 0) })
+        }, lp(top = dp(12)))
+
+        val feed = FeedView(this) { item, a -> svc.onAnswer(item, a); backToRun() }
+        feed.maxBubble = (resources.displayMetrics.widthPixels * 0.78f).toInt()
+        liveFeed = feed
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(feed, FrameLayout.LayoutParams(-1, -2))
+        }
+        liveScroll = scroll
+        col.addView(scroll, lp(-1, 0, 1f, top = dp(4)))
+
+        col.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val field = EditText(this@MainActivity).apply {
+                textSize = 15f
+                setTextColor(C.TXT)
+                setHintTextColor(C.MUTE)
+                background = round(C.CARD, dp(24).toFloat(), dp(1), C.LINE)
+                setPadding(dp(16), dp(12), dp(14), dp(12))
+                minHeight = dp(48)
+                maxLines = 5
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                imeOptions = EditorInfo.IME_ACTION_SEND
+                setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_SEND) { sendLive(); true } else false }
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                    override fun afterTextChanged(s: Editable?) { updateLiveAction() }
+                })
             }
-        }, lp(top = dp(14)))
+            liveField = field
+            addView(field, lp(0, -2, 1f))
+            val action = ImageView(this@MainActivity).apply {
+                scaleType = ImageView.ScaleType.FIT_XY
+                val p = dp(13)
+                setPadding(p, p, p, p)
+                setOnClickListener {
+                    if (liveField?.text?.isNotBlank() == true && voice?.active != true) sendLive()
+                    else listen(liveField, null, liveHint()) { t -> liveField?.setText(""); deliverLive(t, true) }
+                }
+            }
+            liveAction = action
+            addView(action, lp(dp(48), dp(48), left = dp(8)))
+        }, lp(top = dp(8)))
+        refreshLive()
+        return col
     }
 
-    private fun toggleListening() {
-        val v = voice ?: Voice(this,
-            onPartial = { t -> taskField?.setText(t); taskField?.setSelection(t.length) },
-            onFinal = { t -> taskField?.setText(t); taskField?.setSelection(t.length); Prefs.task = t },
+    private fun liveHint(): String {
+        val ov = AgentService.instance?.overlay ?: return ""
+        return when {
+            !ov.phase.running -> "Follow up, e.g. “now do the same for…”"
+            ov.phase == Phase.ASKING -> "Type your answer…"
+            else -> "Tell the agent something…"
+        }
+    }
+
+    /** Updates the run view in place (keeps what the user is typing). */
+    private fun refreshLive() {
+        val ov = AgentService.instance?.overlay ?: return
+        val feed = liveFeed ?: return
+        liveTitle?.text = ov.title()
+        liveSub?.text = ov.task
+        liveDot?.let { it.color = ov.phase.color; it.pulse = ov.phase.pulse }
+        livePause?.let {
+            it.visibility = if (ov.phase.running && ov.phase != Phase.ASKING) View.VISIBLE else View.GONE
+            it.setImageDrawable(Icon(if (ov.phase == Phase.PAUSED) "play" else "pause", C.TXT))
+            it.contentDescription = if (ov.phase == Phase.PAUSED) "Continue" else "Pause"
+        }
+        if (voice?.active != true) liveField?.hint = liveHint()
+        if (feed.sync(ov.items)) liveScroll?.let { s -> s.post { s.fullScroll(View.FOCUS_DOWN) } }
+        updateLiveAction()
+    }
+
+    private fun updateLiveAction() {
+        val a = liveAction ?: return
+        val listening = voice?.active == true
+        val typing = liveField?.text?.isNotBlank() == true && !listening
+        a.setImageDrawable(Icon(if (typing) "send" else "mic", if (listening) 0xFFFFFFFF.toInt() else C.ON_ACCENT))
+        a.background = pressable(if (listening) C.BAD else C.ACCENT, 24)
+        a.contentDescription = if (typing) "Send" else "Speak"
+    }
+
+    private fun sendLive() {
+        val t = liveField?.text?.toString()?.trim().orEmpty()
+        if (t.isEmpty()) return
+        liveField?.setText("")
+        deliverLive(t, false)
+    }
+
+    /** A message from the run view: steers the run (or starts a follow-up), then goes back so the agent can continue. */
+    private fun deliverLive(text: String, spoken: Boolean) {
+        val svc = AgentService.instance ?: return
+        if (svc.agent == null && (!Auth.signedIn || Prefs.currentModel() == null)) { toast("Sign in with ChatGPT first"); return }
+        svc.sendMessage(text, spoken)
+        backToRun()
+    }
+
+    /** Leaves the app so the agent continues on the screen it was using. */
+    private fun backToRun() {
+        currentFocus?.let { getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(it.windowToken, 0) }
+        main.postDelayed({ moveTaskToBack(true) }, 150)
+    }
+
+    // ---------------------------------------------------------------- voice
+
+    /** Starts or stops speech input into [field]; [onDone] gets the final text. */
+    private fun listen(field: EditText?, mic: ImageView?, hint: String, onDone: (String) -> Unit) {
+        voice?.let { if (it.active) { it.stop(); return } }
+        if (!Voice.hasPermission(this)) { requestMic(true); return }
+        val v = Voice(this,
+            onPartial = { t -> field?.setText(t); field?.setSelection(t.length) },
+            onFinal = { t -> onDone(t) },
             onEnd = { err ->
-                micButton?.let { it.setImageDrawable(Icon("mic", C.TXT)); it.background = pressable(0x1AFFFFFF, 26) }
+                mic?.let { it.setImageDrawable(Icon("mic", C.TXT)); it.background = pressable(0x1AFFFFFF, 22) }
+                field?.hint = hint
+                updateLiveAction()
                 if (err != null && err != "cancelled") toast(err)
             },
-        ).also { voice = it }
-        if (v.active) { v.stop(); return }
-        if (!Voice.hasPermission(this)) { requestMic(true); return }
-        micButton?.let { it.setImageDrawable(Icon("mic", 0xFFFFFFFF.toInt())); it.background = pressable(C.BAD, 26) }
-        taskField?.hint = "Listening…"
+            onRetry = { name -> field?.setText(""); field?.hint = "Say it again in $name…" },
+        )
+        voice = v
+        mic?.let { it.setImageDrawable(Icon("mic", 0xFFFFFFFF.toInt())); it.background = pressable(C.BAD, 22) }
         v.start(Prefs.voiceLang)
+        field?.hint = "Listening · " + Voice.displayName(v.language)
+        updateLiveAction()
     }
 
     private fun requestMic(thenListen: Boolean) {
@@ -502,8 +669,11 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != 7) return
         render()
-        if (Voice.hasPermission(this)) { if (listenAfterGrant && tab == Tab.HOME) toggleListening() }
-        else if (!shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
+        if (Voice.hasPermission(this)) {
+            if (listenAfterGrant && tab == Tab.HOME) {
+                if (liveFeed != null) liveAction?.performClick() else micButton?.performClick()
+            }
+        } else if (!shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) {
             toast("Microphone is blocked. Allow it in App info → Permissions.")
             openAppInfo()
         }
@@ -775,7 +945,7 @@ class MainActivity : Activity() {
                 switch(Prefs.askFirst) { Prefs.askFirst = it }),
             row("touch", "Wait while I touch the screen", "Tap anything yourself; the agent pauses and then continues from there",
                 switch(Prefs.touchWait) { Prefs.touchWait = it }),
-            row("mic", "Voice language", Voice.LANGUAGES.firstOrNull { it.first == Prefs.voiceLang }?.second ?: Prefs.voiceLang, icon("right", C.MUTE, 18)) { pickVoice() },
+            row("mic", "Voice language", Voice.settingText(this@MainActivity), icon("right", C.MUTE, 18)) { pickVoice() },
         ))
 
         section("Data")
@@ -844,8 +1014,11 @@ class MainActivity : Activity() {
 
     private fun pickMode() = pick("Screen reading", Mode.entries.map { it.label }, Mode.entries.indexOf(Prefs.mode)) { Prefs.mode = Mode.entries[it] }
 
-    private fun pickVoice() = pick("Voice language", Voice.LANGUAGES.map { it.second }, Voice.LANGUAGES.indexOfFirst { it.first == Prefs.voiceLang }) {
+    private fun pickVoice() = pick("Voice language",
+        Voice.LANGUAGES.map { if (it.first.isEmpty()) "Automatic (the languages of your phone and keyboard)" else it.second },
+        Voice.LANGUAGES.indexOfFirst { it.first == Prefs.voiceLang }) {
         Prefs.voiceLang = Voice.LANGUAGES[it].first
+        Prefs.lastVoiceLang = ""
     }
 
     // ---------------------------------------------------------------- actions
@@ -918,6 +1091,7 @@ class MainActivity : Activity() {
         val model = Prefs.currentModel() ?: return toast("No model loaded yet").also { fetchModels() }
         AgentBus.lastAnswer = null
         if (!svc.startAgent(task, Prefs.mode, model, Prefs.effort)) toast("The agent is already running")
+        else { Prefs.task = ""; showLive = true }
         render()
     }
 
@@ -925,6 +1099,14 @@ class MainActivity : Activity() {
     private fun handleIntent(i: Intent?) {
         if (i == null) return
         if (i.getBooleanExtra("grant_mic", false)) { i.removeExtra("grant_mic"); requestMic(false) }
+        if (i.getBooleanExtra("live", false)) {
+            i.removeExtra("live")
+            showLive = true
+            tab = Tab.HOME
+            detail = null
+            showLog = false
+            render()
+        }
         if (!BuildConfig.DEBUG) return
         i.getStringExtra("task")?.let { Prefs.task = it }
         i.getStringExtra("mode")?.let { Prefs.mode = Mode.of(it) }

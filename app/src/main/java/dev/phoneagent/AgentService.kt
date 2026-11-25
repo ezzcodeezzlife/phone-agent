@@ -64,8 +64,18 @@ class AgentService : AccessibilityService(), OverlayHost {
     @Volatile var agent: Agent? = null
     /** The last finished run, for follow-ups from the overlay. */
     @Volatile private var lastRun: Agent? = null
-    private var overlay: Overlay? = null
+    /** The run overlay; it also holds the run conversation that the app shows full screen. */
+    var overlay: Overlay? = null
+        private set
+    private var touches: TouchLayer? = null
     private var voice: Voice? = null
+    /** The overlay should be on screen (a run is going or its result is still open). */
+    private var overlayWanted = false
+    /** Phone Agent's own app is in front: the overlay hides and the agent waits. */
+    @Volatile var appOpen = false
+        private set
+    /** The app's full-screen run view listens here (main thread). */
+    var feedListener: (() -> Unit)? = null
 
     /** Bumped whenever the user does something that makes the agent's current plan stale. */
     val interrupts = AtomicInteger()
@@ -83,7 +93,8 @@ class AgentService : AccessibilityService(), OverlayHost {
         instance = this
         Prefs.init(this)
         Auth.init(this)
-        overlay = Overlay(this, this)
+        overlay = Overlay(this, this).apply { onChange = { feedListener?.invoke() } }
+        touches = TouchLayer(this)
         AgentBus.log("Accessibility service connected")
         AgentBus.changed()
         if (BuildConfig.DEBUG) registerDumpReceiver()
@@ -108,6 +119,60 @@ class AgentService : AccessibilityService(), OverlayHost {
         }
         registerReceiver(receiver, android.content.IntentFilter("dev.phoneagent.DUMP"), RECEIVER_EXPORTED)
         dumpReceiver = receiver
+        val voiceTest = object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: android.content.Context?, i: Intent?) { voiceTest(i ?: return) }
+        }
+        registerReceiver(voiceTest, android.content.IntentFilter("dev.phoneagent.VOICE_TEST"), RECEIVER_EXPORTED)
+        voiceTestReceiver = voiceTest
+    }
+
+    private var voiceTestReceiver: android.content.BroadcastReceiver? = null
+
+    /**
+     * Debug only: `am broadcast -a dev.phoneagent.VOICE_TEST -p dev.phoneagent --es text "…" --es tts de-DE --es langs en-US,de-DE`
+     * speaks [text] with the phone's text-to-speech into a file and runs speech recognition on it ("automatic" language).
+     */
+    private fun voiceTest(i: Intent) {
+        val text = i.getStringExtra("text") ?: return
+        val ttsLang = java.util.Locale.forLanguageTag(i.getStringExtra("tts") ?: "de-DE")
+        val langs = i.getStringExtra("langs")?.split(',')?.map { it.trim() }
+        val file = java.io.File(cacheDir, "voice-test.wav")
+        var tts: android.speech.tts.TextToSpeech? = null
+        tts = android.speech.tts.TextToSpeech(this) { status ->
+            val t = tts ?: return@TextToSpeech
+            AgentBus.log("Voice test: TTS init $status, language ${t.setLanguage(ttsLang)}")
+            t.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                override fun onStart(id: String?) {}
+                @Deprecated("Deprecated in Java") override fun onError(id: String?) { AgentBus.log("Voice test: TTS error") }
+                override fun onDone(id: String?) {
+                    t.shutdown()
+                    val bytes = file.readBytes()
+                    val rate = java.nio.ByteBuffer.wrap(bytes, 24, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+                    val dataAt = String(bytes, 36, 4).let { if (it == "data") 44 else bytes.size.coerceAtMost(44) }
+                    AgentBus.log("Voice test: ${bytes.size} bytes at $rate Hz")
+                    // A fresh pipe with the same audio for every attempt (the voice may listen twice).
+                    val source = {
+                        val (read, write) = android.os.ParcelFileDescriptor.createPipe()
+                        Thread {
+                            android.os.ParcelFileDescriptor.AutoCloseOutputStream(write).use { out ->
+                                out.write(bytes, dataAt, bytes.size - dataAt)
+                                out.write(ByteArray(rate * 2 * 2))   // 2 s of silence so the recognizer ends
+                            }
+                        }.start()
+                        read to rate
+                    }
+                    main.post {
+                        Voice(this@AgentService,
+                            onPartial = { p -> AgentBus.log("Voice test partial: $p") },
+                            onFinal = { f -> AgentBus.log("Voice test result: $f") },
+                            onEnd = { e -> AgentBus.log("Voice test end: ${e ?: "ok"}") },
+                            onRetry = { n -> AgentBus.log("Voice test retry in $n") },
+                        ).apply { testAudio = source; testLanguages = langs }.start("")
+                    }
+                }
+            })
+            t.synthesizeToFile(text, null, file, "voice-test")
+        }
     }
 
     private var dumpReceiver: android.content.BroadcastReceiver? = null
@@ -115,8 +180,11 @@ class AgentService : AccessibilityService(), OverlayHost {
     override fun onUnbind(intent: Intent?): Boolean {
         dumpReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
         dumpReceiver = null
+        voiceTestReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
+        voiceTestReceiver = null
         agent?.stopped = true
         overlay?.hide()
+        touches?.hide()
         voice?.cancel()
         instance = null
         AgentBus.changed()
@@ -169,8 +237,11 @@ class AgentService : AccessibilityService(), OverlayHost {
         main.post {
             val ov = overlay ?: return@post
             if (followUp == null) { ov.clear(); ov.collapse() }
-            ov.show()
+            ov.setTask(task)
             ov.add(FeedItem(if (followUp == null) FeedItem.Kind.TASK else FeedItem.Kind.USER, task, spoken = spoken))
+            overlayWanted = true
+            if (!appOpen) ov.show()
+            touches?.show()
         }
         Thread {
             val answer = try { a.run() } catch (e: Exception) {
@@ -181,6 +252,11 @@ class AgentService : AccessibilityService(), OverlayHost {
             AgentBus.lastAnswer = answer
             lastRun = a
             agent = null
+            main.post {
+                // Seen in the app already: don't pop the result up again when the user leaves it.
+                if (appOpen) overlayWanted = false
+                main.postDelayed({ if (agent == null) touches?.hide() }, 1200)
+            }
             AgentBus.changed()
         }.start()
         AgentBus.changed()
@@ -208,10 +284,39 @@ class AgentService : AccessibilityService(), OverlayHost {
 
     override fun onClose() {
         voice?.cancel()
+        overlayWanted = false
         overlay?.hide()
         overlay?.clear()
         lastRun = null
     }
+
+    /** "Open full screen" in the panel: the app shows the run; while it is in front the agent waits. */
+    override fun onOpenApp() {
+        if (agent == null) overlayWanted = false
+        try {
+            startActivity(Intent(this, MainActivity::class.java).putExtra("live", true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        } catch (e: Exception) { AgentBus.log("Can't open the app: $e") }
+    }
+
+    /** Called by the app when it comes to the front or leaves (main thread). */
+    fun setAppOpen(open: Boolean) {
+        if (appOpen == open) return
+        appOpen = open
+        val ov = overlay ?: return
+        if (open) {
+            ov.hide()
+            if (agent != null) interrupt("the user opened the Phone Agent app")
+        } else if (overlayWanted) {
+            ov.show()
+        }
+    }
+
+    /** A message typed or spoken in the app's run view. */
+    fun sendMessage(text: String, spoken: Boolean) = deliver(text, spoken)
+
+    /** "New task" in the app: closes the finished run. */
+    fun closeRun() { if (agent == null) onClose() }
 
     override fun onMicTap() {
         val v = voice ?: Voice(this,
@@ -222,10 +327,11 @@ class AgentService : AccessibilityService(), OverlayHost {
                 overlay?.setListening(false)
                 if (err != null && err != "cancelled") overlay?.add(FeedItem(FeedItem.Kind.NOTE, err))
             },
+            onRetry = { name -> overlay?.setListening(true, "", "Say it again in $name…") },
         ).also { voice = it }
         if (v.active) { v.stop(); return }
         if (!Voice.hasPermission(this)) {
-            overlay?.add(FeedItem(FeedItem.Kind.NOTE, "Allow the microphone in Phone Agent → Settings to talk to the agent."))
+            overlay?.add(FeedItem(FeedItem.Kind.NOTE, "Allow the microphone in the Phone Agent app (Settings → Microphone) to talk to the agent."))
             overlay?.expand()
             return
         }
@@ -290,11 +396,24 @@ class AgentService : AccessibilityService(), OverlayHost {
         return r
     }
 
-    /** Waits until the UI stopped changing (no accessibility events for 500 ms), max [maxMs]. */
-    fun settle(maxMs: Long = 3000) {
+    /** Waits until the UI stopped changing (no accessibility events for [quietMs]), at least [minMs], at most [maxMs]. */
+    fun settle(maxMs: Long = 3000, quietMs: Long = 500, minMs: Long = 350) {
         val start = SystemClock.uptimeMillis()
-        Thread.sleep(350)
-        while (SystemClock.uptimeMillis() - lastEventAt < 500 && SystemClock.uptimeMillis() - start < maxMs) Thread.sleep(100)
+        Thread.sleep(minMs)
+        while (SystemClock.uptimeMillis() - lastEventAt < quietMs && SystemClock.uptimeMillis() - start < maxMs) Thread.sleep(60)
+    }
+
+    /** The current screen's elements (screen pixels), without a screenshot. For script steps. */
+    fun elements(): Map<Int, El> {
+        val screen = getSystemService(WindowManager::class.java).currentWindowMetrics.bounds
+        return buildTree(1f, screen.width().toLong() * screen.height()).second
+    }
+
+    /** Signature of the current screen, to see whether an action changed anything. */
+    fun screenSignature(): Int {
+        val screen = getSystemService(WindowManager::class.java).currentWindowMetrics.bounds
+        val (tree, _, pkg) = buildTree(1f, screen.width().toLong() * screen.height())
+        return (pkg + tree).hashCode()
     }
 
     // ---------------------------------------------------------------- observe
@@ -335,17 +454,20 @@ class AgentService : AccessibilityService(), OverlayHost {
         return Observation(fgPkg, w, h, scale, tree, els, jpeg, (fgPkg + tree).hashCode(), shotNote, forModel && jpeg != null)
     }
 
-    /** Screenshot without our overlay on it. */
+    /** Screenshot without our overlay and touch effects on it. */
     private fun captureForModel(): Bitmap? {
-        val ov = overlay
-        if (ov == null || onMain { ov.visible } != true) return screenshot()
         val latch = CountDownLatch(1)
-        main.post { ov.hideForCapture { latch.countDown() } }
+        main.post {
+            val ov = overlay
+            val hideOverlay = { if (ov != null && ov.visible) ov.hideForCapture { latch.countDown() } else latch.countDown() }
+            val tl = touches
+            if (tl != null) tl.clearForCapture(hideOverlay) else hideOverlay()
+        }
         latch.await(700, TimeUnit.MILLISECONDS)
         try {
             return screenshot()
         } finally {
-            main.post { ov.restoreAfterCapture() }
+            main.post { overlay?.restoreAfterCapture() }
         }
     }
 
@@ -521,15 +643,29 @@ class AgentService : AccessibilityService(), OverlayHost {
         }
     }
 
-    fun tap(x: Float, y: Float, durationMs: Long = 60): Boolean = gesture(Path().apply { moveTo(x, y) }, durationMs)
+    fun tap(x: Float, y: Float, durationMs: Long = 60): Boolean {
+        fx { tap(x, y, durationMs) }
+        return gesture(Path().apply { moveTo(x, y) }, durationMs)
+    }
 
-    fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long): Boolean =
-        gesture(Path().apply { moveTo(x1, y1); lineTo(x2, y2) }, durationMs)
+    fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long): Boolean {
+        fx { swipe(x1, y1, x2, y2, durationMs) }
+        return gesture(Path().apply { moveTo(x1, y1); lineTo(x2, y2) }, durationMs)
+    }
+
+    /** Top edge of the overlay on screen, or Int.MAX_VALUE when it is hidden. */
+    fun overlayTop(): Int = onMain { overlay?.bounds()?.top } ?: Int.MAX_VALUE
+
+    /** Shows a touch effect (main thread, fire and forget). */
+    fun fx(block: TouchLayer.() -> Unit) { main.post { touches?.block() } }
 
     fun click(node: AccessibilityNodeInfo, long: Boolean = false): Boolean {
         var c: AccessibilityNodeInfo? = node
         while (c != null) {
             if ((if (long) c.isLongClickable else c.isClickable) && c.isEnabled) {
+                val r = Rect()
+                c.getBoundsInScreen(r)
+                fx { tap(r.exactCenterX(), r.exactCenterY(), if (long) 600 else 60) }
                 return c.performAction(if (long) AccessibilityNodeInfo.ACTION_LONG_CLICK else AccessibilityNodeInfo.ACTION_CLICK)
             }
             c = c.parent

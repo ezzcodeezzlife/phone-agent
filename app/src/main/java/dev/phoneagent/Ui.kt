@@ -288,6 +288,13 @@ class Icon(private val name: String, color: Int) : Drawable() {
                 }, p)
             }
             "user" -> { stroke(1.8f); c.drawCircle(12f, 8.5f, 3.8f, p); c.drawArc(4.5f, 14f, 19.5f, 27f, 180f, 180f, false, p) }
+            "full" -> {
+                stroke(2f)
+                poly(c, 4f, 9.5f, 4f, 4f, 9.5f, 4f); poly(c, 14.5f, 4f, 20f, 4f, 20f, 9.5f)
+                poly(c, 20f, 14.5f, 20f, 20f, 14.5f, 20f); poly(c, 9.5f, 20f, 4f, 20f, 4f, 14.5f)
+            }
+            "plus" -> { stroke(2f); c.drawLine(12f, 5f, 12f, 19f, p); c.drawLine(5f, 12f, 19f, 12f, p) }
+            "arrow_up" -> { stroke(2.2f); c.drawLine(12f, 19.5f, 12f, 5f, p); poly(c, 6f, 11f, 12f, 5f, 18f, 11f) }
         }
         c.restore()
     }

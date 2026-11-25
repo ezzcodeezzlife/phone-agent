@@ -53,7 +53,12 @@ class Agent(
     private val context: String?,
     private val goHome: Boolean,
 ) {
-    companion object { const val MAX_STEPS = 40 }
+    companion object {
+        const val MAX_STEPS = 40
+        const val MAX_SCRIPT_STEPS = 12
+        /** With "ask first", these buttons may only be pressed as a single tap after confirm, never inside a script. */
+        private val FINAL_BUTTON = Regex("^(send|senden|absenden|post|posten|publish|veröffentlichen|pay|bezahlen|zahlen|buy|kaufen|order|bestellen|place order|delete|löschen|transfer|überweisen)( .*)?$")
+    }
 
     @Volatile var stopped = false
     @Volatile var paused = false
@@ -108,6 +113,7 @@ class Agent(
 
     private fun holdReason(): String? = when {
         paused -> "Paused · tap ▶ to continue"
+        svc.appOpen -> "Waiting while the app is open"
         svc.listening -> "Listening…"
         svc.typing -> "Waiting while you type…"
         Prefs.touchWait && svc.userTouching() -> "Your turn · I'll continue when you stop"
@@ -187,7 +193,6 @@ class Agent(
         AgentBus.runFile = File(dir, "log.txt")
         AgentBus.log("▶ Task: $task")
         AgentBus.log("  Mode: ${mode.label} · Model: $model · Effort: $effort · Ask first: $askFirst")
-        val modelName = Prefs.modelName(model)
         val t0 = SystemClock.elapsedRealtime()
         var inTok = 0L
         var outTok = 0L
@@ -197,7 +202,7 @@ class Agent(
         var lastSig: Int? = null
         var idle = 0
 
-        svc.ui { setPhase(Phase.WORKING, "Starting…"); setDetail("Starting · $modelName") }
+        svc.ui { setPhase(Phase.WORKING, "Starting…") }
         if (goHome) {
             svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
             Thread.sleep(900)
@@ -222,7 +227,7 @@ class Agent(
             lastSig = obs.signature
             val app = svc.appLabel(obs.pkg)
             if (obs.pkg.isNotEmpty()) apps += app
-            svc.ui { setDetail("Step $step · $app · $modelName"); setStatus("Thinking…") }
+            svc.ui { setStatus("Thinking…") }
 
             val withShot = obs.shotForModel
             lookRequested = false
@@ -304,19 +309,25 @@ class Agent(
                         event(step, "question", q, a, true)
                         continue@loop
                     }
+                    "run_script" -> {
+                        AgentBus.log("➜ run_script (${c.args.optJSONArray("steps")?.length() ?: 0} steps)" + c.args.optString("why").let { if (it.isNotBlank()) " – $it" else "" })
+                        val log = runScript(c, obs, step, mark)
+                        history += "$step. $log"
+                        continue@loop
+                    }
                     "confirm" -> {
                         val what = c.args.optString("summary").ifBlank { c.args.optString("action") }.ifBlank { "Continue?" }
                         val button = c.args.optString("button").ifBlank { "Do it" }.take(24)
                         AgentBus.log("🛡 Confirm: $what [$button]")
                         val a = ask(FeedItem(FeedItem.Kind.CONFIRM, what, sub = button)) ?: break@loop
                         val res = when (a) {
-                            Overlay.CONFIRM_YES -> "APPROVED by the user. Do it now (press the final button)."
-                            Overlay.CONFIRM_NO -> "DECLINED by the user. Do NOT do it. Finish and say that it was not done."
+                            FeedItem.CONFIRM_YES -> "APPROVED by the user. Do it now (press the final button)."
+                            FeedItem.CONFIRM_NO -> "DECLINED by the user. Do NOT do it. Finish and say that it was not done."
                             else -> "Not approved yet; the user replied: \"${a.take(300)}\". Adjust accordingly and call confirm again before the final action."
                         }
                         AgentBus.log("   ↳ $res")
                         history += "$step. confirm(\"${what.take(160)}\") → $res"
-                        event(step, "confirm", what, when (a) { Overlay.CONFIRM_YES -> "approved"; Overlay.CONFIRM_NO -> "cancelled"; else -> a }, a == Overlay.CONFIRM_YES)
+                        event(step, "confirm", what, when (a) { FeedItem.CONFIRM_YES -> "approved"; FeedItem.CONFIRM_NO -> "cancelled"; else -> a }, a == FeedItem.CONFIRM_YES)
                         continue@loop
                     }
                 }
@@ -361,12 +372,10 @@ class Agent(
             .apply { if (context != null) put("follow_up_of", context) }
             .toString(2))
         AgentBus.runFile = null
-        val meta = "$step steps · ${duration(secs)} · ${compact(inTok + outTok)} tokens"
         val title = when (status) { "done" -> "Done"; "stopped" -> "Stopped"; else -> "Didn't finish" }
         svc.ui {
-            add(FeedItem(FeedItem.Kind.RESULT, finalAnswer, sub = meta, options = listOf(title), ok = status == "done"))
-            setPhase(if (status == "done") Phase.DONE else Phase.FAILED, finalAnswer.lineSequence().first().take(120))
-            setDetail(meta)
+            add(FeedItem(FeedItem.Kind.RESULT, finalAnswer, sub = duration(secs), options = listOf(title), ok = status == "done"))
+            setPhase(if (status == "done") Phase.DONE else Phase.FAILED, if (status == "stopped") "Stopped" else finalAnswer.lineSequence().first().take(120))
             expand()
         }
         Runs.prune(svc)
@@ -389,7 +398,7 @@ Prefer element ids. Use x,y pixel coordinates for things that have no box/id."""
 grouped by window (App, Keyboard, System). Prefer element ids for tap / long_press / type_text / scroll. Coordinates are in a ${'$'}W x ${'$'}H space.
 Some turns also include a screenshot of the same screen with numbered boxes matching the ids. If what you need is NOT in the list (icons without labels such as ☰ menus, images, maps, canvas or game content) and no screenshot is attached, call look; on the next turn tap it with x,y from the screenshot."""
         }
-        val safety = if (askFirst) """- Safety: never send messages or emails, post, buy, pay, delete data or change account, security, privacy or payment settings unless the task or the user's messages explicitly ask for exactly that. When they do, prepare everything, then call confirm with exactly what will happen (recipient and text, amount, what gets deleted) BEFORE pressing the final button. Press it only after confirm returned APPROVED; if it was declined, do not do it."""
+        val safety = if (askFirst) """- Safety: never send messages or emails, post, buy, pay, delete data or change account, security, privacy or payment settings unless the task or the user's messages explicitly ask for exactly that. When they do, prepare everything, then call confirm with exactly what will happen (recipient and text, amount, what gets deleted) BEFORE pressing the final button. Press it only after confirm returned APPROVED, as a single tap (never inside run_script); if it was declined, do not do it."""
         else """- Safety: never send messages or emails, post, buy, pay, delete data or change account, security, privacy or payment settings unless the task or the user's messages explicitly ask for exactly that. When they do, you may complete it without asking."""
         return """You are Phone Agent. You operate the user's Android phone to complete the user's task by calling the phone tools.
 Each turn you receive the task, messages the user sent during the run, the log of your previous actions, and the CURRENT screen. Then you act.
@@ -397,7 +406,8 @@ Each turn you receive the task, messages the user sent during the run, the log o
 $screen
 
 How to work:
-- Usually call exactly ONE tool per turn, then look at the new screen. Only chain 2-3 calls when the outcome is certain (e.g. tap a field, then type into it).
+- Be fast. When you can predict the next steps, call run_script with several steps in ONE turn instead of one action per turn. Typical cases: open an app and follow a menu path you know (open_app "Settings" → tap "Connected devices" → tap "Connection preferences" → tap "Bluetooth"), fill in a form you can see (type into "Name", type into "Email", tap "Next"), or search (tap "Search", then type with submit). Script steps find their target by its visible text, so they also work on screens you have not seen yet: use the exact words the screen will show, in the language of the phone's UI. Each step waits up to 3 s for its target. The script stops at the first step that fails; you then get the current screen and continue with a new script or single actions.
+- Use single tools (element ids or x,y) when you cannot predict the next screen or the target has no text (unlabeled icons). Do not call several single tools in one turn when the first one changes the screen; use run_script for that.
 - To start an app, use open_app with the app's name instead of searching for icons.
 - If an action did not have the expected effect ("[screen did not change]"), do not repeat it blindly: try another element, scroll, go back, or use a search field inside the app.
 - Dismiss onboarding screens, tips and permission dialogs in the most neutral way (e.g. "Skip", "Not now", "Allow only while using the app") when they block the task. Ignore banners and notices that do not block the task.
@@ -506,6 +516,12 @@ $safety
             JSONObject().put("direction", enumProp("Direction", "up", "down", "left", "right")).apply {
                 if (ids) put("element", prop("integer", "Scrollable element id"))
             }, listOf("direction")))
+        fns.put(fn("run_script",
+            "Run several actions in a row without looking at the screen in between – much faster than one action per turn. " +
+                "Steps find their target by its visible text (target), so they work on screens you have not seen yet; each step waits up to 3 s for it to appear. " +
+                "The script stops at the first step that fails, and you get a report plus the current screen.",
+            JSONObject().put("steps", JSONObject().put("type", "array").put("description", "2-$MAX_SCRIPT_STEPS steps, run in order")
+                .put("items", scriptStepSchema())), listOf("steps")))
         fns.put(fn("press_key", "Press a system key.",
             JSONObject().put("key", enumProp("Key", "back", "home", "recents", "notifications", "quick_settings", "enter")), listOf("key")))
         fns.put(fn("open_app", "Launch an installed app by its name, e.g. 'Settings', 'Chrome', 'Calendar'.",
@@ -531,6 +547,280 @@ $safety
         if (!Compat.namespace) return fns
         return JSONArray().put(JSONObject().put("type", "namespace").put("name", "phone")
             .put("description", "Operate the user's Android phone").put("tools", fns))
+    }
+
+    private fun scriptStepSchema(): JSONObject {
+        fun prop(type: String, desc: String) = JSONObject().put("type", type).put("description", desc)
+        fun enumProp(desc: String, vararg values: String) = JSONObject().put("type", "string").put("description", desc).put("enum", JSONArray(values.toList()))
+        val props = JSONObject()
+            .put("action", enumProp("What to do", "tap", "long_press", "type", "scroll", "press_key", "open_app", "wait", "wait_for"))
+            .put("target", prop("string", "tap/long_press/wait_for: the element's visible text or description, exactly as shown. type: the field's label or hint (omit to type into the focused field). scroll: the scrollable list (optional)."))
+            .put("element", prop("integer", "Element id from the CURRENT screen; only valid in the first step"))
+            .put("x", prop("integer", "X coordinate, if the target has no text"))
+            .put("y", prop("integer", "Y coordinate"))
+            .put("text", prop("string", "type: the text to type"))
+            .put("submit", prop("boolean", "type: press Enter/Search afterwards"))
+            .put("clear", prop("boolean", "type: replace the field's text (default true)"))
+            .put("key", enumProp("press_key: the key", "back", "home", "recents", "notifications", "quick_settings", "enter"))
+            .put("name", prop("string", "open_app: the app's name"))
+            .put("direction", enumProp("scroll: direction", "up", "down", "left", "right"))
+            .put("until", prop("string", "scroll: keep scrolling until this text is on screen (max 8 times)"))
+            .put("seconds", prop("number", "wait: seconds (max 5); wait_for: timeout (default 5, max 10)"))
+        return JSONObject().put("type", "object").put("properties", props).put("required", JSONArray(listOf("action"))).put("additionalProperties", false)
+    }
+
+    // ---------------------------------------------------------------- scripts
+
+    private class StepResult(val ok: Boolean, val msg: String)
+
+    /** Runs a run_script call step by step and stops at the first failure. Returns the entry for the action history. */
+    private fun runScript(c: Call, obs: Observation, step: Int, mark: Int): String {
+        val arr = c.args.optJSONArray("steps")
+        val steps = if (arr == null) emptyList() else (0 until minOf(arr.length(), MAX_SCRIPT_STEPS)).mapNotNull { arr.optJSONObject(it) }
+        if (steps.isEmpty()) return "run_script → error: no steps given"
+        val why = c.args.optString("why")
+        val lines = ArrayList<String>()
+        var notRunFrom = -1
+        var prev = ""
+        for ((k, st) in steps.withIndex()) {
+            waitWhileHeld()
+            if (stopped) { notRunFrom = k + 1; break }
+            if (svc.interrupts.get() != mark) {
+                lines += "(interrupted: ${svc.lastInterrupt})"
+                notRunFrom = k + 1
+                break
+            }
+            if (k > 0) svc.settle(maxMs = 2500, quietMs = 300, minMs = if (prev == "open_app") 700 else 150)
+            val label = stepTarget(st, obs, k)
+            svc.ui { setStatus(stepDoing(st, label)) }
+            val r = try { execStep(st, k, obs, prev) } catch (e: Exception) { StepResult(false, "error: ${e.message}") }
+            val pretty = stepPretty(st, label)
+            AgentBus.log("   ${k + 1}) $pretty → ${r.msg}")
+            lines += "${k + 1}) $pretty → ${r.msg}"
+            val text = stepDid(st, label, r)
+            val sub = if (k == 0) why else ""
+            svc.ui { add(FeedItem(FeedItem.Kind.ACTION, text, sub = sub, ok = r.ok)) }
+            event(step, "action", text, sub, r.ok)
+            prev = st.optString("action")
+            if (!r.ok) { notRunFrom = k + 2; break }
+        }
+        val sb = StringBuilder("run_script")
+        if (why.isNotBlank()) sb.append(" – ").append(why)
+        sb.append(':')
+        lines.forEach { sb.append("\n   ").append(it) }
+        sb.append("\n   ").append(when {
+            notRunFrom < 0 -> "All ${steps.size} steps done."
+            notRunFrom > steps.size -> "Script stopped at its last step. Continue from the current screen."
+            else -> "Script stopped; steps $notRunFrom-${steps.size} were not run. Continue from the current screen."
+        })
+        return sb.toString()
+    }
+
+    private fun norm(s: String) = s.lowercase(Locale.ROOT).replace(Regex("[\"'“”„‘’«»…]"), "").replace(Regex("\\s+"), " ").trim()
+
+    /** How well an element matches [q] (normalized): 100 = exact text, less for partial matches; adjusted for what the step needs. */
+    private fun score(e: El, q: String, want: String): Pair<Int, Boolean> {
+        val parts = ArrayList<String>()
+        e.label.split(" | ").forEach { parts += norm(it.removePrefix("#")) }
+        e.node.hintText?.let { parts += norm(it.toString()) }
+        e.node.contentDescription?.let { parts += norm(it.toString()) }
+        e.node.viewIdResourceName?.substringAfter(":id/")?.let { parts += norm(it.replace('_', ' ')) }
+        var best = 0
+        for (p in parts) {
+            if (p.isEmpty()) continue
+            val v = when {
+                p == q -> 100
+                q.length >= 3 && p.startsWith(q) && !p[q.length].isLetterOrDigit() -> 80
+                q.length >= 3 && Regex("(^|\\W)" + Regex.escape(q) + "($|\\W)").containsMatchIn(p) -> 60
+                q.length >= 4 && p.contains(q) -> 45
+                else -> 0
+            }
+            if (v > best) best = v
+        }
+        if (best == 0) return 0 to false
+        var sc = best
+        when (want) {
+            "type" -> sc += if (e.node.isEditable) 30 else -40
+            "scroll" -> sc += if (e.node.isScrollable) 30 else -40
+            "tap" -> if (e.interactive) sc += 8
+        }
+        if (!e.inApp) sc -= 12
+        if (!e.node.isEnabled) sc -= 25
+        return sc to (best == 100)
+    }
+
+    /** Finds the element matching [query] on the current screen, waiting up to [timeoutMs] for it to appear. */
+    private fun find(query: String, want: String, timeoutMs: Long): El? {
+        val q = norm(query)
+        if (q.isEmpty()) return null
+        val start = SystemClock.uptimeMillis()
+        while (true) {
+            var best: El? = null
+            var bestScore = 0
+            var exact = false
+            for (e in svc.elements().values) {
+                val (sc, ex) = score(e, q, want)
+                if (sc > bestScore) { best = e; bestScore = sc; exact = ex }
+            }
+            val waited = SystemClock.uptimeMillis() - start
+            if (best != null && exact && bestScore >= 60) return best
+            // A partial match may be the previous screen still fading out; give the exact one a moment to show up.
+            if (best != null && bestScore >= 50 && waited >= minOf(800L, timeoutMs)) return best
+            if (waited >= timeoutMs || stopped) return null
+            Thread.sleep(200)
+        }
+    }
+
+    private fun stepPoint(st: JSONObject, obs: Observation): Pair<Float, Float>? {
+        val x = st.optDouble("x", -1.0)
+        val y = st.optDouble("y", -1.0)
+        return if (x > 0 && y > 0) (x.toFloat() / obs.scale) to (y.toFloat() / obs.scale) else null
+    }
+
+    /** The element a step points at: its id (first step only), else its target text, else the text of the given id. */
+    private fun stepElement(st: JSONObject, k: Int, obs: Observation, want: String, timeoutMs: Long): Pair<El?, String?> {
+        val hasId = st.has("element") && !st.isNull("element")
+        if (hasId && k == 0) return (obs.elements[st.optInt("element")] ?: return null to "error: element ${st.opt("element")} does not exist") to null
+        val q = st.optString("target").trim().ifEmpty {
+            if (hasId) obs.elements[st.optInt("element")]?.label?.substringBefore(" | ")?.takeIf { !it.startsWith("#") } ?: "" else ""
+        }
+        if (q.isEmpty()) return null to null
+        val e = find(q, want, timeoutMs) ?: return null to "error: nothing matching \"$q\" on the screen"
+        return e to null
+    }
+
+    private fun execStep(st: JSONObject, k: Int, obs: Observation, prev: String): StepResult {
+        val action = st.optString("action")
+        val timeout = if (prev == "open_app") 5000L else 3000L
+        fun fail(m: String) = StepResult(false, m)
+        return when (action) {
+            "tap", "long_press" -> {
+                val (e, err) = stepElement(st, k, obs, "tap", timeout)
+                if (err != null) return fail(err)
+                val name = e?.label?.substringBefore(" | ") ?: st.optString("target")
+                if (askFirst && FINAL_BUTTON.matches(norm(name))) {
+                    return fail("error: \"$name\" is a final send/pay/delete button. Call confirm first, then tap it as a single action (not in run_script).")
+                }
+                val long = action == "long_press"
+                if (e != null) {
+                    val r = Rect(e.rect)
+                    r.intersect(0, 0, (obs.w / obs.scale).toInt(), (obs.h / obs.scale).toInt())
+                    when {
+                        svc.tap(r.exactCenterX(), r.exactCenterY(), if (long) 800 else 60) -> StepResult(true, "ok")
+                        svc.click(e.node, long) -> StepResult(true, "ok (accessibility click)")
+                        else -> fail("tap failed")
+                    }
+                } else {
+                    val pt = stepPoint(st, obs) ?: return fail("error: give a target text, an element id (first step) or x,y")
+                    if (svc.tap(pt.first, pt.second, if (long) 800 else 60)) StepResult(true, "ok") else fail("tap failed")
+                }
+            }
+            "type" -> {
+                val text = st.optString("text")
+                val clear = st.optBoolean("clear", true)
+                val submit = st.optBoolean("submit", false)
+                val (e, err) = stepElement(st, k, obs, "type", timeout)
+                if (err != null) return fail(err)
+                val res = if (e != null) typeInto(e.node, e.rect, text, clear, submit) else {
+                    val focused = svc.focusedInput()
+                    val only = if (focused == null) svc.elements().values.filter { it.node.isEditable && it.inApp }.singleOrNull() else null
+                    typeInto(focused ?: only?.node, only?.rect, text, clear, submit)
+                }
+                StepResult(!(res.startsWith("error") || res.contains("failed")), res)
+            }
+            "scroll" -> {
+                val dir = st.optString("direction", "down")
+                val container = if (st.optString("target").isNotBlank()) stepElement(st, k, obs, "scroll", 1500).first else null
+                val sw = obs.w / obs.scale
+                val sh = obs.h / obs.scale
+                val until = st.optString("until").trim()
+                if (until.isEmpty()) {
+                    val res = scrollWith(dir, container, sw, sh)
+                    return StepResult(!res.contains("failed"), res)
+                }
+                repeat(8) { i ->
+                    if (stopped) return fail("stopped")
+                    if (find(until, "any", 0) != null) return StepResult(true, "ok, \"$until\" is on screen" + if (i > 0) " after $i scrolls" else "")
+                    val before = svc.screenSignature()
+                    scrollWith(dir, container, sw, sh)
+                    svc.settle(maxMs = 1500, quietMs = 250, minMs = 200)
+                    if (svc.screenSignature() == before) return fail("reached the end of the list; \"$until\" not found")
+                }
+                if (find(until, "any", 0) != null) StepResult(true, "ok, \"$until\" is on screen after 8 scrolls")
+                else fail("\"$until\" not found after 8 scrolls")
+            }
+            "press_key" -> {
+                val res = pressKey(st.optString("key"))
+                StepResult(res.startsWith("ok"), res)
+            }
+            "open_app" -> {
+                val res = svc.openApp(st.optString("name"))
+                StepResult(res.startsWith("opened "), res)
+            }
+            "wait" -> { Thread.sleep((st.optDouble("seconds", 1.0).coerceIn(0.2, 5.0) * 1000).toLong()); StepResult(true, "ok") }
+            "wait_for" -> {
+                val q = st.optString("target")
+                val ms = (st.optDouble("seconds", 5.0).coerceIn(0.5, 10.0) * 1000).toLong()
+                if (find(q, "any", ms) != null) StepResult(true, "ok, \"$q\" is on screen") else fail("\"$q\" did not appear within ${ms / 1000} s")
+            }
+            else -> fail("error: unknown action \"$action\"")
+        }
+    }
+
+    private fun quote(t: String) = "“" + (if (t.length > 40) t.take(40) + "…" else t) + "”"
+
+    /** The step's target as shown to the user ("“Bluetooth”"), or "". */
+    private fun stepTarget(st: JSONObject, obs: Observation, k: Int): String {
+        st.optString("target").trim().takeIf { it.isNotEmpty() }?.let { return quote(it) }
+        if (st.has("element") && !st.isNull("element")) {
+            obs.elements[st.optInt("element")]?.label?.substringBefore(" | ")?.trim()?.takeIf { it.isNotEmpty() && !it.startsWith("#") }?.let { return quote(it) }
+        }
+        return ""
+    }
+
+    private fun stepPretty(st: JSONObject, label: String): String {
+        val a = st.optString("action")
+        return a + when (a) {
+            "tap", "long_press", "wait_for" -> " " + label.ifEmpty { if (st.has("x")) "(${st.optInt("x")},${st.optInt("y")})" else "?" }
+            "type" -> " \"${st.optString("text").take(80)}\"" + (if (label.isNotEmpty()) " into $label" else "") + (if (st.optBoolean("submit")) " + enter" else "")
+            "scroll" -> " ${st.optString("direction", "down")}" + st.optString("until").let { if (it.isNotBlank()) " until \"$it\"" else "" }
+            "press_key" -> " ${st.optString("key")}"
+            "open_app" -> " \"${st.optString("name")}\""
+            "wait" -> " ${st.optDouble("seconds", 1.0)} s"
+            else -> ""
+        }
+    }
+
+    private fun stepDoing(st: JSONObject, t: String): String = when (st.optString("action")) {
+        "tap" -> if (t.isEmpty()) "Tapping the screen" else "Tapping $t"
+        "long_press" -> if (t.isEmpty()) "Long-pressing the screen" else "Long-pressing $t"
+        "type" -> "Typing “${st.optString("text").take(40)}”"
+        "scroll" -> st.optString("until").let { if (it.isNotBlank()) "Looking for ${quote(it)}" else "Scrolling ${st.optString("direction", "down")}" }
+        "press_key" -> keyText(st.optString("key"), false)
+        "open_app" -> "Opening ${st.optString("name")}"
+        "wait_for" -> "Waiting for $t"
+        else -> "Waiting for the app"
+    }
+
+    private fun stepDid(st: JSONObject, t: String, r: StepResult): String {
+        val a = st.optString("action")
+        if (!r.ok) return when (a) {
+            "tap", "long_press", "wait_for" -> if (r.msg.startsWith("error: nothing matching") || r.msg.contains("did not appear")) "Couldn't find ${t.ifEmpty { "the target" }}" else "Couldn't tap ${t.ifEmpty { "there" }}"
+            "type" -> "Couldn't type “${st.optString("text").take(40)}”"
+            "scroll" -> st.optString("until").let { if (it.isNotBlank()) "Couldn't find ${quote(it)}" else "Couldn't scroll" }
+            "open_app" -> "Couldn't find the app “${st.optString("name")}”"
+            else -> "Step failed"
+        }
+        return when (a) {
+            "tap" -> if (t.isEmpty()) "Tapped the screen" else "Tapped $t"
+            "long_press" -> if (t.isEmpty()) "Long-pressed the screen" else "Long-pressed $t"
+            "type" -> "Typed “${st.optString("text").take(60)}”" + if (r.msg.contains("enter pressed")) " and pressed Enter" else ""
+            "scroll" -> st.optString("until").let { if (it.isNotBlank()) "Scrolled to ${quote(it)}" else "Scrolled ${st.optString("direction", "down")}" }
+            "press_key" -> keyText(st.optString("key"), true)
+            "open_app" -> "Opened " + r.msg.removePrefix("opened ").substringBefore(" (")
+            "wait_for" -> "$t appeared"
+            else -> "Waited"
+        }
     }
 
     // ---------------------------------------------------------------- execute
@@ -588,15 +878,7 @@ $safety
                 if (ok) "ok" else "swipe failed"
             }
             "scroll" -> scroll(a, obs)
-            "press_key" -> when (a.optString("key")) {
-                "back" -> global(AccessibilityService.GLOBAL_ACTION_BACK)
-                "home" -> global(AccessibilityService.GLOBAL_ACTION_HOME)
-                "recents" -> global(AccessibilityService.GLOBAL_ACTION_RECENTS)
-                "notifications" -> global(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
-                "quick_settings" -> global(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
-                "enter" -> if (svc.imeEnter(null)) "ok" else "enter failed (no focused field?)"
-                else -> "unknown key"
-            }
+            "press_key" -> pressKey(a.optString("key"))
             "open_app" -> svc.openApp(a.optString("name"))
             "wait" -> { Thread.sleep((a.optDouble("seconds", 1.0).coerceIn(0.2, 5.0) * 1000).toLong()); "ok" }
             "finish" -> "done"
@@ -606,24 +888,40 @@ $safety
 
     private fun global(action: Int) = if (svc.performGlobalAction(action)) "ok" else "failed"
 
+    private fun pressKey(key: String): String = when (key) {
+        "back" -> global(AccessibilityService.GLOBAL_ACTION_BACK)
+        "home" -> global(AccessibilityService.GLOBAL_ACTION_HOME)
+        "recents" -> global(AccessibilityService.GLOBAL_ACTION_RECENTS)
+        "notifications" -> global(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+        "quick_settings" -> global(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
+        "enter" -> if (svc.imeEnter(null)) "ok" else "enter failed (no focused field?)"
+        else -> "unknown key"
+    }
+
     private fun typeText(a: JSONObject, obs: Observation): String {
         val text = a.optString("text")
         val clear = a.optBoolean("clear", true)
         val submit = a.optBoolean("submit", false)
-        var node: AccessibilityNodeInfo?
         if (a.has("element") && !a.isNull("element")) {
             val e = obs.elements[a.optInt("element")] ?: return "error: unknown element"
-            node = e.node
-            if (!e.node.isEditable || !e.node.isFocused) {
-                svc.tap(e.rect.exactCenterX(), e.rect.exactCenterY())
-                Thread.sleep(600)
-                node = svc.focusedInput() ?: e.node
-            }
-        } else {
-            node = svc.focusedInput()
+            return typeInto(e.node, e.rect, text, clear, submit)
+        }
+        return typeInto(svc.focusedInput(), null, text, clear, submit)
+    }
+
+    /** Types into [field], tapping it first ([rect]) if it isn't the focused input yet. */
+    private fun typeInto(field: AccessibilityNodeInfo?, rect: Rect?, text: String, clear: Boolean, submit: Boolean): String {
+        var node = field
+        if (node != null && rect != null && (!node.isEditable || !node.isFocused)) {
+            svc.tap(rect.exactCenterX(), rect.exactCenterY())
+            Thread.sleep(600)
+            node = svc.focusedInput() ?: node
         }
         if (node == null) return "error: no focused input field – tap the field first"
         node.refresh()
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (!bounds.isEmpty) svc.fx { outline(bounds) }
         val existing = if (clear || node.isShowingHintText) "" else node.text?.toString() ?: ""
         var how = "typed"
         if (!svc.setText(node, existing + text)) {
@@ -637,23 +935,34 @@ $safety
     }
 
     private fun scroll(a: JSONObject, obs: Observation): String {
-        val dir = a.optString("direction", "down")
         val e = if (a.has("element") && !a.isNull("element")) obs.elements[a.optInt("element")] else null
-        if (e != null && e.node.isScrollable && svc.scrollNode(e.node, dir)) return "ok"
-        val sw = obs.w / obs.scale
-        val sh = obs.h / obs.scale
-        val area = e?.rect ?: Rect(0, (sh * 0.2f).toInt(), sw.toInt(), (sh * 0.8f).toInt())
+        return scrollWith(a.optString("direction", "down"), e, obs.w / obs.scale, obs.h / obs.scale)
+    }
+
+    /** Scrolls [e] (or the middle of the screen) with the accessibility action, else with a swipe. */
+    private fun scrollWith(dir: String, e: El?, sw: Float, sh: Float): String {
+        var area = e?.rect?.let { Rect(it) } ?: Rect(0, (sh * 0.2f).toInt(), sw.toInt(), (sh * 0.8f).toInt())
+        // Swipe above the overlay when there is room, so the panel never has to let touches through meanwhile.
+        val top = svc.overlayTop()
+        if (top < area.bottom) {
+            val free = Rect(area.left, maxOf(area.top, (sh * 0.12f).toInt()), area.right, top - (sh * 0.02f).toInt())
+            if (free.height() >= sh * 0.2f) area = free
+        }
         val cx = area.exactCenterX()
         val cy = area.exactCenterY()
         val dx = area.width() * 0.3f
         val dy = area.height() * 0.3f
-        val ok = when (dir) {
-            "up" -> svc.swipe(cx, cy - dy, cx, cy + dy, 450)
-            "left" -> svc.swipe(cx - dx, cy, cx + dx, cy, 450)
-            "right" -> svc.swipe(cx + dx, cy, cx - dx, cy, 450)
-            else -> svc.swipe(cx, cy + dy, cx, cy - dy, 450)
+        val (x1, y1, x2, y2) = when (dir) {
+            "up" -> listOf(cx, cy - dy, cx, cy + dy)
+            "left" -> listOf(cx - dx, cy, cx + dx, cy)
+            "right" -> listOf(cx + dx, cy, cx - dx, cy)
+            else -> listOf(cx, cy + dy, cx, cy - dy)
         }
-        return if (ok) "ok (swipe)" else "scroll failed"
+        if (e != null && e.node.isScrollable && svc.scrollNode(e.node, dir)) {
+            svc.fx { swipe(x1, y1, x2, y2, 350) }
+            return "ok"
+        }
+        return if (svc.swipe(x1, y1, x2, y2, 450)) "ok (swipe)" else "scroll failed"
     }
 
     private fun pretty(c: Call, obs: Observation): String {

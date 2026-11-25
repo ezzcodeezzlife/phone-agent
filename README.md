@@ -13,13 +13,14 @@ Status: prototype, tested on the emulator (Pixel 9, Android 15) and a Xiaomi pho
 2. Under **Accessibility**, switch on **Phone Agent** (the only system setting needed). When the APK is installed outside a store on Android 13+, first allow it under App info → ⋮ → "Allow restricted settings".
 3. **Continue with ChatGPT**: sign in in the browser and allow ChatGPT plan usage (Plus/Pro).
 4. Optional: allow the microphone to give tasks and corrections by voice.
-5. Say or type a task on Home and press **Start**.
+5. Say or type a task on Home and press the arrow.
 
 ## Using it
 
-**While the agent works**, a small island sits at the bottom of the screen: what the agent is doing right now, plus mic, pause and stop.
+**While the agent works**, a small island sits at the bottom of the screen: what the agent is doing right now, plus buttons to expand, pause and stop. A dot with a ripple shows where it taps, a trail where it swipes, and an outline around fields it types into.
 
-- **Pull the island up** (or tap it) for the full panel. It shows the step, the app and the model, everything the agent did so far, and a text field with a mic.
+- **Expand the island** (the arrow, a tap, or a swipe up) for the panel: everything the agent did so far and a text field with a mic.
+- **Full screen.** The corner button in the panel opens the run in the app. The agent waits while the app is in front; *Continue*, sending a message or answering a question takes you back and it carries on.
 - **Steer at any time.** Type or say a correction ("make it 7:00 instead"). It goes into the very next step; actions the agent had planned for the old screen are dropped.
 - **Take over.** Touches outside the island go to the phone as usual. The agent waits while you tap and then continues from the screen you left it on.
 - **Questions.** When a task is ambiguous (two contacts called Alex, no time given), the agent asks in the panel. Answer with a tap, by typing or by voice.
@@ -30,7 +31,7 @@ The overlay is hidden from the screenshots sent to the model, and the agent's ow
 
 **In the app:**
 
-- **Home:** task input with voice, model / effort / "ask first" chips, setup steps and recent runs.
+- **Home:** a new task, full screen: model picker, suggestions and the input with voice and "ask first". Until accessibility and sign-in are done, the two setup steps take the middle. While a run is going, Home shows the run.
 - **Runs:** every finished run, grouped by day and filterable. A run shows its answer, stats, each step (including your messages and answers) and the last screen.
 - **Usage:** tasks, tokens and agent time for 7 days, 30 days or all time, tokens per day, averages per task and a breakdown by model. Plan limits themselves are only shown by ChatGPT, so the screen links there.
 - **Settings:** account, permissions, model, reasoning effort, screen-reading mode, "ask before sending, paying or deleting", "wait while I touch the screen", voice language, run history and a debug log.
@@ -46,9 +47,10 @@ AgentService  ── AccessibilityService (the one switch)
               scroll actions, global actions (back/home/…), launch intents
 Overlay       ── island + chat panel (TYPE_ACCESSIBILITY_OVERLAY); watches outside touches,
               lets the agent's gestures through, hides itself for model screenshots
-Voice         ── SpeechRecognizer with live partial results
+TouchLayer    ── full-screen, untouchable overlay that animates the agent's taps, swipes and typing
+Voice         ── SpeechRecognizer with live partial results and automatic language (see below)
 Agent         ── loop: observe → Responses API (function tools) → execute → repeat (max 40 steps);
-              user messages, pause, hold-while-touching, ask_user and confirm
+              run_script, user messages, pause, hold-while-touching / app open, ask_user and confirm
 Runs          ── run history on disk (summary.json with steps, tokens, timing) → Runs + Usage screens
 Auth          ── Sign in with ChatGPT (dynamic client registration, PKCE, loopback 127.0.0.1:1455)
 OpenAI        ── POST /v1/responses with store=false, stream=true (SSE)
@@ -64,6 +66,14 @@ No third-party dependencies (HttpURLConnection, org.json, java.security).
 | `tree` | Text list `[id] Type "label" flags @(x,y)` from the accessibility tree | Element IDs (taps at the element center) |
 | `screenshot` | Only the screenshot (720×1616) | Pixel coordinates x,y |
 | `hybrid` | Screenshot with numbered boxes plus the element list | IDs, coordinates as a fallback |
+
+### Scripts: several steps per model call
+
+When the next screens are predictable, the model calls `run_script` with up to 12 steps (`tap`, `long_press`, `type`, `scroll` with `until`, `press_key`, `open_app`, `wait`, `wait_for`). Steps name their target by its visible text, so they work on screens the model has not seen yet. Each step waits up to 3 s for its target (exact text first, partial matches after a moment). The script stops at the first step that fails, and the model gets a step-by-step report plus the current screen and decides again. Example: "Open Settings and turn off Bluetooth" takes 3 model calls instead of 6 (open Settings → Connected devices → Connection preferences → Bluetooth in one script). With "ask first" on, final send/pay/delete buttons are refused inside scripts; they need `confirm` and a single tap.
+
+### Voice language
+
+"Automatic" (the default) uses the phone's languages plus the keyboard's languages. It starts in the language it heard last time, or in the language the recent tasks were typed in. On Android 14+ with an on-device recognizer, the spoken language is detected; if it differs and the recognizer could not switch by itself, the transcript is dropped and it listens again in the detected language ("Say it again in Deutsch…"), which is then remembered. Settings can also pin one language.
 
 ### Sign in with ChatGPT (open-source flow)
 
@@ -100,6 +110,13 @@ Start a task from adb (debug builds only):
 
 ```bash
 adb shell am start -n dev.phoneagent/.MainActivity --es task "…" --es mode tree --es effort low --ez run true
+```
+
+Test speech recognition with synthesized speech (debug builds; uses the phone's text-to-speech, no microphone):
+
+```bash
+adb shell am broadcast -a dev.phoneagent.VOICE_TEST -p dev.phoneagent --es text "'Mach bitte das WLAN aus'" --es tts de-DE --es langs en-US,de-DE
+adb logcat -d -s PhoneAgent | grep -i voice
 ```
 
 Save what the model sees on the current screen, without an AI call:
